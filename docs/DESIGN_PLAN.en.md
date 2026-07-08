@@ -110,16 +110,16 @@ The key decisions:
 
 **Nodes are explicit state machines — hand-written pure reducers.** Each node is a pure reducer `(state, event) => [state', effects[]]`: receive an event → return new state + a list of effects (messages to send, timers to set). This is exactly the actor model, and exactly how the book describes the protocols — the code will read like the pseudocode in the papers. **Decision: no XState.** Reasons: (a) no repo in the current stack uses XState (verified across every `package.json` in `~/Projects/Personal`); (b) XState v5 runs actors/delays on real timers by default — embedding it into a discrete event loop with a virtual clock requires a custom clock, directly contradicting the "no real `setTimeout`" principle above; (c) the "statecharts render themselves into diagrams" benefit is overstated — the Stately inspector is a dev tool, not a free in-app embed. If Phase 3 (Raft) shows the statecharts are complex enough to need tooling, run an XState-under-virtual-clock spike then (see Appendix — Open Questions).
 
-**Module contract — deliverable #1 of Phase 0.** "Every later lab is just a plug-in" is only true when the contract is explicit. Draft v0:
+**Module contract — deliverable #1 of Phase 0.** "Every later lab is just a plug-in" is only true when the contract is explicit. v0.1 (validated by the Phase 0 engine, `src/engine/module.ts`):
 
 ```ts
-interface SimModule<S, E> {
-  id: string;                                  // 'lsm-tree' | 'raft' | ...
-  init(config: ModuleConfig, rng: SeededRng): S;
-  reduce(state: S, event: E): [S, Effect[]];   // pure — all protocol logic lives here
-  chaos: ChaosCapability[];                    // the vocabulary this lab supports
-  metrics(state: S): MetricSample[];           // countable numbers for the metrics panel
-  inspect(state: S): InspectorTree;            // state exposed to the renderer
+interface SimModule<S, P> {
+  id: string;                                       // 'lsm-tree' | 'raft' | ...
+  chaos: ChaosCapability[];                         // the vocabulary this lab supports
+  init(nodeId: NodeId, config: ModuleConfig, rng: SeededRng): S;
+  reduce(state: S, event: ModuleEvent<P>, rng: SeededRng): [S, Effect[]]; // pure
+  metrics(states: Map<NodeId, S>): MetricSample[];  // countable numbers for the panel
+  inspect(state: S): InspectorTree;                 // state exposed to the renderer
 }
 ```
 

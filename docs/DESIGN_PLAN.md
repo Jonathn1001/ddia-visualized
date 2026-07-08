@@ -110,16 +110,16 @@ Các quyết định quan trọng:
 
 **Node là state machine tường minh — pure reducer tự viết.** Mỗi node là một reducer thuần `(state, event) => [state', effects[]]`: nhận event → trả state mới + danh sách effect (message gửi đi, timer đặt). Đây chính là actor model, và cũng chính là cách sách mô tả các protocol — code sẽ đọc giống pseudocode trong paper. **Quyết định: không dùng XState.** Lý do: (a) không repo nào trong stack hiện tại dùng XState (đã kiểm tra toàn bộ `package.json` trong `~/Projects/Personal`); (b) XState v5 chạy actor/delay trên real timer mặc định — nhúng vào discrete event loop với virtual clock cần custom clock, mâu thuẫn trực tiếp nguyên tắc "không `setTimeout` thật" ở trên; (c) lợi ích "statechart tự render thành diagram" là overstated — Stately inspector là dev tool, không phải embed miễn phí trong app. Nếu Phase 3 (Raft) cho thấy statechart phức tạp cần công cụ, làm một spike XState-dưới-virtual-clock khi đó (xem Appendix — Open Questions).
 
-**Module contract — deliverable số 1 của Phase 0.** "Mọi lab sau chỉ là plug-in" chỉ đúng khi contract được định nghĩa tường minh. Draft v0:
+**Module contract — deliverable số 1 của Phase 0.** "Mọi lab sau chỉ là plug-in" chỉ đúng khi contract được định nghĩa tường minh. v0.1 (đã validate bằng engine Phase 0, `src/engine/module.ts`):
 
 ```ts
-interface SimModule<S, E> {
-  id: string;                                  // 'lsm-tree' | 'raft' | ...
-  init(config: ModuleConfig, rng: SeededRng): S;
-  reduce(state: S, event: E): [S, Effect[]];   // pure — toàn bộ logic protocol ở đây
-  chaos: ChaosCapability[];                    // vocabulary lab này hỗ trợ
-  metrics(state: S): MetricSample[];           // số đếm được cho metrics panel
-  inspect(state: S): InspectorTree;            // state expose cho renderer
+interface SimModule<S, P> {
+  id: string;                                       // 'lsm-tree' | 'raft' | ...
+  chaos: ChaosCapability[];                         // vocabulary lab này hỗ trợ
+  init(nodeId: NodeId, config: ModuleConfig, rng: SeededRng): S;
+  reduce(state: S, event: ModuleEvent<P>, rng: SeededRng): [S, Effect[]]; // pure
+  metrics(states: Map<NodeId, S>): MetricSample[];  // số đếm được cho panel
+  inspect(state: S): InspectorTree;                 // state expose cho renderer
 }
 ```
 
