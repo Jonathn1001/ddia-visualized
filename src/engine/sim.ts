@@ -1,6 +1,6 @@
 import { EventQueue, type NodeId, type SimEvent } from './events';
 import { SeededRng } from './rng';
-import { SimNetwork, type NetworkOptions } from './network';
+import { SimNetwork, type NetworkOptions, type NetworkSnapshot } from './network';
 import type { Effect, ModuleConfig, ModuleEvent, SimModule } from './module';
 
 /** Chaos & config actions. Enter the event queue like any user input. */
@@ -18,6 +18,18 @@ export interface LoggedEvent {
   kind: SimEvent['kind'];
   from?: NodeId;
   payload: unknown;
+}
+
+export interface SimSnapshot {
+  time: number;
+  seq: number;
+  processed: number;
+  rngState: number;
+  heap: SimEvent[];
+  states: [NodeId, unknown][];
+  dead: NodeId[];
+  network: NetworkSnapshot;
+  logLength: number;
 }
 
 /** Reserved pseudo-target for engine-level control events. */
@@ -151,5 +163,33 @@ export class Simulation<S, P = unknown> {
   runUntil(t: number): void {
     for (let next = this.queue.peek(); next && next.time <= t; next = this.queue.peek()) this.step();
     this.time = Math.max(this.time, t);
+  }
+
+  /** Full deep-copied state of the sim — everything replay needs. */
+  snapshot(): SimSnapshot {
+    return structuredClone({
+      time: this.time,
+      seq: this.seq,
+      processed: this.processed,
+      rngState: this.rng.getState(),
+      heap: this.queue.toArray(),
+      states: [...this.states.entries()],
+      dead: [...this.dead],
+      network: this.network.snapshot(),
+      logLength: this.eventLog.length,
+    }) as SimSnapshot;
+  }
+
+  restore(s: SimSnapshot): void {
+    const c = structuredClone(s) as SimSnapshot;
+    this.time = c.time;
+    this.seq = c.seq;
+    this.processed = c.processed;
+    this.rng.setState(c.rngState);
+    this.queue.loadFrom(c.heap);
+    this.states = new Map(c.states as [NodeId, S][]);
+    this.dead = new Set(c.dead);
+    this.network.restore(c.network);
+    this.eventLog.length = c.logLength; // future entries are re-derived on replay
   }
 }
