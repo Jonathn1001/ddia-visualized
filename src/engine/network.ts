@@ -28,11 +28,11 @@ export class SimNetwork {
   private groups: NodeId[][] | null = null;
 
   constructor(opts?: Partial<NetworkOptions>) {
-    this.opts = { latency: [1, 10], dropRate: 0, duplicateRate: 0, ...opts };
+    this.opts = structuredClone({ latency: [1, 10], dropRate: 0, duplicateRate: 0, ...opts });
   }
 
   partition(groups: NodeId[][]): void {
-    this.groups = groups;
+    this.groups = structuredClone(groups);
   }
 
   heal(): void {
@@ -41,8 +41,11 @@ export class SimNetwork {
 
   canReach(from: NodeId, to: NodeId): boolean {
     if (!this.groups) return true;
-    const g = this.groups.find((grp) => grp.includes(from));
-    return g !== undefined && g.includes(to);
+    const gf = this.groups.find((grp) => grp.includes(from));
+    const gt = this.groups.find((grp) => grp.includes(to));
+    // Unlisted nodes are not subject to the partition — reachable by all.
+    if (gf === undefined || gt === undefined) return true;
+    return gf.includes(to);
   }
 
   /** [] = dropped/partitioned; 1 entry = normal; 2 entries = duplicated. */

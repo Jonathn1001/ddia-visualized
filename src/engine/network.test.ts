@@ -55,3 +55,26 @@ test('snapshot/restore round-trips options and partition', () => {
   expect(net.opts.dropRate).toBe(0.5);
   expect(net.opts.latency).toEqual([2, 4]);
 });
+
+test('partition deep-copies its argument (no external aliasing)', () => {
+  const net = new SimNetwork();
+  const groups = [['a'], ['b']];
+  net.partition(groups);
+  groups[0].push('b'); // mutate caller's array after the call
+  expect(net.canReach('a', 'b')).toBe(false); // live state unaffected
+});
+
+test('constructor deep-copies the latency tuple (no external aliasing)', () => {
+  const latency: [number, number] = [2, 4];
+  const net = new SimNetwork({ latency });
+  latency[0] = 999;
+  expect(net.opts.latency).toEqual([2, 4]);
+});
+
+test('nodes not listed in any partition group stay reachable', () => {
+  const net = new SimNetwork();
+  net.partition([['a'], ['b']]);
+  expect(net.canReach('c', 'a')).toBe(true); // 'c' unlisted → not partitioned
+  expect(net.canReach('a', 'c')).toBe(true);
+  expect(net.canReach('c', 'd')).toBe(true); // two unlisted nodes reach each other
+});
