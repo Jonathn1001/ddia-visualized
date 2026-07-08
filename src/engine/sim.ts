@@ -190,6 +190,12 @@ export class Simulation<S, P = unknown> {
     this.states = new Map(c.states as [NodeId, S][]);
     this.dead = new Set(c.dead);
     this.network.restore(c.network);
-    this.eventLog.length = c.logLength; // future entries are re-derived on replay
+    if (c.logLength > this.eventLog.length) {
+      throw new Error(
+        `cannot restore to logLength ${c.logLength} > current eventLog length ${this.eventLog.length}: ` +
+          `snapshots store the log length, not its entries, so a forward restore must be reached by replay`,
+      );
+    }
+    this.eventLog.length = c.logLength; // truncate; future entries are re-derived on replay
   }
 }

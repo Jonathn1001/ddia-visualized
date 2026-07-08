@@ -69,3 +69,14 @@ test('DoD: scrub across 10k events lands anywhere in under 100ms', () => {
     expect(dt).toBeLessThan(100);
   }
 });
+
+test('restore throws on a forward restore whose log entries were never stored (no sparse holes)', () => {
+  const sim = mk();
+  sim.runSteps(100);
+  const behind = sim.snapshot(); // logLength = 100
+  sim.runSteps(200); // processed = 300, eventLog length = 300
+  const ahead = sim.snapshot(); // logLength = 300
+  sim.restore(behind); // ok: truncate 300 -> 100
+  expect(sim.eventLog.length).toBe(100);
+  expect(() => sim.restore(ahead)).toThrow(/logLength/); // 300 > current 100 -> guard fires, no sparse holes
+});
