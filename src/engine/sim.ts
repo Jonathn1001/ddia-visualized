@@ -110,6 +110,10 @@ export class Simulation<S, P = unknown> {
       this.applyControl(e.payload as ControlAction);
       return logged;
     }
+    // Recheck reachability at delivery, not just at send: a partition may form
+    // between send and delivery, and an in-flight message is then lost. Mirrors
+    // the dead-node recheck below; deterministic because network state at the
+    // virtual delivery time is itself deterministic.
     const blocked = e.kind === 'message' && e.from !== undefined && !this.network.canReach(e.from, e.target);
     if (!this.dead.has(e.target) && !blocked) {
       const mev: ModuleEvent<P> = {

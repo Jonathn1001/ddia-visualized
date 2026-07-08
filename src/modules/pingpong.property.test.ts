@@ -50,7 +50,7 @@ describe('ping-pong properties', () => {
             seed,
             network: { latency: [1, 30], dropRate: drop, duplicateRate: dup },
           });
-          const last: Record<string, number> = { n0: 0, n1: 0, n2: 0 };
+          const last: Record<string, number> = Object.fromEntries(NODES.map((id) => [id, 0]));
           for (let i = 0; i < 3000; i++) {
             if (!sim.step()) break;
             for (const id of NODES) {

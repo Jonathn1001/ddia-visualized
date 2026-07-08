@@ -56,11 +56,7 @@ export const pingPong: SimModule<PPState, PPPayload> = {
       case 'message': {
         const { token } = event.payload as { token: number };
         if (token <= state.lastDelivered) return [state, []]; // duplicate or stale
-        const cleared =
-          state.pendingToken !== null && token > state.pendingToken
-            ? { ...state, pendingToken: null }
-            : state;
-        return sendToken({ ...cleared, lastDelivered: token }, token + 1);
+        return sendToken({ ...state, lastDelivered: token }, token + 1);
       }
       case 'timer': {
         const { retransmit } = event.payload as { retransmit: number };
