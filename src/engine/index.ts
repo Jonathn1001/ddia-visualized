@@ -13,6 +13,6 @@ export type {
   InspectorTree,
 } from './module';
 export { Simulation } from './sim';
-export type { ControlAction, LoggedEvent, SimSnapshot } from './sim';
+export type { ControlAction, LoggedEvent, SimSnapshot, InFlightMessage } from './sim';
 export { TimelineRecorder } from './recorder';
 export { fnv1a, hashEventLog } from './hash';

@@ -32,6 +32,15 @@ export interface SimSnapshot {
   logLength: number;
 }
 
+/** A scheduled-but-undelivered message — the renderer's "dots in flight". */
+export interface InFlightMessage {
+  from: NodeId;
+  target: NodeId;
+  sentAt: number;
+  deliverAt: number;
+  payload: unknown;
+}
+
 /** Reserved pseudo-target for engine-level control events. */
 const CONTROL_TARGET = '#control';
 
@@ -88,6 +97,21 @@ export class Simulation<S, P = unknown> {
 
   get pending(): number {
     return this.queue.size;
+  }
+
+  /** Read-only view of undelivered messages, sorted by delivery time. */
+  inFlight(): InFlightMessage[] {
+    return this.queue
+      .toArray()
+      .filter((e) => e.kind === 'message')
+      .map((e) => ({
+        from: e.from!,
+        target: e.target,
+        sentAt: e.sentAt ?? e.time,
+        deliverAt: e.time,
+        payload: structuredClone(e.payload),
+      }))
+      .sort((a, b) => a.deliverAt - b.deliverAt || a.sentAt - b.sentAt);
   }
 
   /** Process exactly one event. Returns its log entry, or undefined if idle. */
@@ -154,7 +178,14 @@ export class Simulation<S, P = unknown> {
       this.schedule({ time: this.time + ef.delay, target: self, kind: 'timer', payload: ef.payload });
     } else {
       for (const d of this.network.plan(self, ef.to, this.rng)) {
-        this.schedule({ time: this.time + d.delay, target: ef.to, kind: 'message', from: self, payload: ef.payload });
+        this.schedule({
+          time: this.time + d.delay,
+          target: ef.to,
+          kind: 'message',
+          from: self,
+          sentAt: this.time,
+          payload: ef.payload,
+        });
       }
     }
   }

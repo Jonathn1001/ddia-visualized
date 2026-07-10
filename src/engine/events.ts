@@ -8,6 +8,8 @@ export interface SimEvent<P = unknown> {
   target: NodeId;
   kind: 'init' | 'message' | 'timer' | 'external' | 'control';
   from?: NodeId;
+  /** Virtual time the message was sent (kind 'message' only). */
+  sentAt?: number;
   payload: P;
 }
 
