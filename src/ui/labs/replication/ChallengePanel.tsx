@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { detectStaleRead, type RepPayload, type RepState, type StaleReadResult } from '../../../modules/replication';
 import type { SimDriver } from '../../bridge/SimDriver';
 import { useSimStore } from '../../bridge/simStore';
+import { btnPrimary } from '../../kit/classes';
 
 const ATTEMPT_KEY = 'ddia:ch05:stale-read:attempt';
 const predictionKey = (n: number) => `ddia:ch05:stale-read:prediction:${n}`;
@@ -36,38 +37,39 @@ export function ChallengePanel({ driver }: { driver: SimDriver<RepState, RepPayl
   };
 
   return (
-    <section className="border border-slate-700 rounded p-3 space-y-2 max-w-xl">
-      <h2 className="font-bold text-sm">Chaos Challenge: produce a stale read</h2>
+    <section className="border border-line bg-panel rounded p-3 space-y-2 max-w-xl">
+      <h2 className="font-bold text-sm text-fg">Chaos Challenge: produce a stale read</h2>
       {attempt === null && (
         <>
           <textarea
-            className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-xs font-mono"
+            className="w-full bg-ink border border-line rounded p-2 text-xs font-mono text-fg"
             rows={2}
             placeholder="Predict first: how will you cause a stale read? (skippable)"
             value={prediction}
             onChange={(e) => setPrediction(e.target.value)}
           />
-          <button className="px-2 py-1 rounded bg-sky-700 hover:bg-sky-600 text-xs font-mono" onClick={start}>
+          <button className={btnPrimary} onClick={start}>
             start attempt
           </button>
         </>
       )}
       {attempt !== null && !win && (
-        <p className="text-xs text-slate-400 font-mono">
+        <p className="text-xs text-dim font-mono">
           attempt #{attempt} running — make a read return older data than an acknowledged write.
         </p>
       )}
       {attempt !== null && win && (
         <div className="text-xs font-mono space-y-1">
-          <p className="text-emerald-400 font-bold">✓ challenge complete — stale read verified by the engine</p>
-          <p>
-            read <code>{win.read.key}</code> @ {win.read.node} returned seq {win.read.returnedSeq} at t=
-            {win.read.time}, after write seq {win.ack.seq} was acked at t={win.ack.time}.
+          <p className="text-set font-bold">✓ challenge complete — stale read verified by the engine</p>
+          <p className="text-fg">
+            read <code className="text-warn">{win.read.key}</code> @ {win.read.node} returned seq{' '}
+            {win.read.returnedSeq} at t={win.read.time}, after write seq {win.ack.seq} was acked at t=
+            {win.ack.time}.
           </p>
-          <p className="text-slate-400">
+          <p className="text-dim">
             your prediction: “{localStorage.getItem(predictionKey(attempt)) || '(skipped)'}”
           </p>
-          <button className="underline" onClick={() => setAttempt(null)}>
+          <button className="underline text-fg" onClick={() => setAttempt(null)}>
             try again
           </button>
         </div>

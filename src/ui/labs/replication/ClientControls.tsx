@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import type { NodeId } from '../../../engine';
-
-const btn = 'px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-mono';
+import { btn, inputBox } from '../../kit/classes';
 
 export function ClientControls({
   nodeIds,
@@ -19,13 +18,13 @@ export function ClientControls({
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
       <input
-        className="w-16 bg-slate-900 border border-slate-600 rounded px-1 py-0.5"
+        className={`w-16 ${inputBox}`}
         value={key}
         onChange={(e) => setKey(e.target.value)}
         aria-label="key"
       />
       <input
-        className="w-16 bg-slate-900 border border-slate-600 rounded px-1 py-0.5"
+        className={`w-16 ${inputBox}`}
         value={value}
         onChange={(e) => setValue(e.target.value)}
         aria-label="value"

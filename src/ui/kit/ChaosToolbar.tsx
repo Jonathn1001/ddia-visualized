@@ -1,6 +1,5 @@
 import type { ChaosCapability, ControlAction, NodeId } from '../../engine';
-
-const btn = 'px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-mono';
+import { btn } from './classes';
 
 /** Renders only the controls the module declares (DESIGN_PLAN §5). */
 export function ChaosToolbar({

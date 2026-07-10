@@ -36,7 +36,7 @@ export function ClusterView({
         const p =
           m.deliverAt === m.sentAt ? 1 : Math.min(1, Math.max(0, (time - m.sentAt) / (m.deliverAt - m.sentAt)));
         return (
-          <circle key={k} cx={f.x + (t.x - f.x) * p} cy={f.y + (t.y - f.y) * p} r={4} className="fill-amber-400" />
+          <circle key={k} cx={f.x + (t.x - f.x) * p} cy={f.y + (t.y - f.y) * p} r={4} className="fill-warn" />
         );
       })}
       {nodes.map((n, i) => {
@@ -48,9 +48,9 @@ export function ClusterView({
               cy={q.y}
               r={NODE_R}
               animate={{ opacity: n.dead ? 0.25 : 1 }}
-              className="fill-sky-600"
+              className="fill-set"
             />
-            <text x={q.x} y={q.y + 5} textAnchor="middle" className="fill-white text-xs font-mono">
+            <text x={q.x} y={q.y + 5} textAnchor="middle" className="fill-ink text-xs font-mono font-bold">
               {n.id}
             </text>
           </g>

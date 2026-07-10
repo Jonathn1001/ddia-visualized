@@ -7,6 +7,7 @@ import { ChaosToolbar } from '../../kit/ChaosToolbar';
 import { ClusterView } from '../../kit/ClusterView';
 import { MetricsPanel } from '../../kit/MetricsPanel';
 import { TimelineScrubber } from '../../kit/TimelineScrubber';
+import { btn } from '../../kit/classes';
 import { ChallengePanel } from './ChallengePanel';
 import { ClientControls } from './ClientControls';
 
@@ -46,14 +47,11 @@ export function ReplicationLab() {
             {m}
           </label>
         ))}
-        <button
-          className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600"
-          onClick={() => setEpoch((e) => e + 1)}
-        >
+        <button className={btn} onClick={() => setEpoch((e) => e + 1)}>
           reset (new seed)
         </button>
         <button
-          className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600"
+          className={btn}
           onClick={() => {
             const json = driver.exportSession(localStorage.getItem('ddia:ch05:journal') ?? undefined);
             const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));

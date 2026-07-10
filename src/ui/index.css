@@ -1,1 +1,61 @@
 @import 'tailwindcss';
+
+@theme {
+  --font-display: 'Martian Mono', ui-monospace, monospace;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
+
+  /* Dark is the default (ops-room-in-the-dark). Light overrides below. */
+  --color-ink: #0d1017;
+  --color-panel: #141a23;
+  --color-line: #232c3a;
+  --color-dim: #61708a;
+  --color-fg: #dce4ef;
+  --color-set: #43e0c8; /* teal — healthy / acked / win */
+  --color-sign: #ff5d73; /* coral — dead node / lost write */
+  --color-warn: #e6b450; /* amber — in-flight / lagging */
+}
+
+/*
+ * Light theme: same instrument on a drafting table instead of in the dark.
+ * Surfaces flip; semantic accents keep meaning but darken to 4.5:1 on white.
+ * Toggled at runtime by setting data-theme="light" on <html> (see Navbar).
+ */
+:root[data-theme='light'] {
+  --color-ink: #eef1f6;
+  --color-panel: #ffffff;
+  --color-line: #d3dae6;
+  --color-dim: #566379;
+  --color-fg: #111823;
+  --color-set: #0f766e;
+  --color-sign: #c81e46;
+  --color-warn: #b45309;
+  color-scheme: light;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--color-ink);
+  color: var(--color-fg);
+  font-family: var(--font-mono);
+  -webkit-font-smoothing: antialiased;
+  transition:
+    background-color 200ms ease,
+    color 200ms ease;
+}
+
+:where(button, input, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-set);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
