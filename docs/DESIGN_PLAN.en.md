@@ -6,6 +6,8 @@ Version 1.1 — handoff-ready. (English translation of `DESIGN_PLAN.md`.)
 
 > **v1.1 changelog (post-review):** §6 converted to Tech Stack — Final Decisions: dropped XState (settled on hand-written pure reducers), React 18 → React 19, Framer Motion → the `motion` package, added a perf budget. §5 added the Timeline scrubber mechanism (hybrid snapshot + replay), Module contract v0, Determinism & input recording, and rAF batching for the UI bridge. §1 added Non-goals. §3 settled on an in-repo MDX knowledge base; marked the RAFT attack paper as citation-needed. §4 Ch9 names the linearizability checking algorithm. §9 added measurable Definitions of Done for Phase 0/1. §2 fixed the Oddity citation. Added Appendix — Open Questions.
 
+> **v1.2 changelog (Phase 1 kickoff, 2026-07-10):** Story mode replaced by annotated replay (§3). §5: contract bumped to v0.2 (events + metrics carry virtual time); snapshot interval fixed at N = 500; deep-clone wording corrected; chaos-vocabulary status notes added. §9: Phase 0 DoD checked off; Phase 1 DoD replaced by v2 (spec: `docs/superpowers/specs/2026-07-10-phase1-lab-kit-design.md`). Appendix: (c) resolved → GitHub Pages; share URLs deferred; added (e) RNG stream split. English version is canonical from v1.2.
+
 ---
 
 ## 1. Product Vision
@@ -46,7 +48,7 @@ A survey of existing projects on the internet reveals a fragmented ecosystem wit
 
 Each concept is packaged as a **Lab**. Every Lab shares the same 3-layer structure, moving from passive to active:
 
-**Mode 1 — Story (guided walkthrough).** Secret Lives of Data style: step-by-step animation with narration; the user clicks Next to walk through the canonical scenario. Answers guiding question #1: *how is data stored, read, written, propagated?*
+**Mode 1 — Story (guided walkthrough).** Secret Lives of Data style: step-by-step animation with narration; the user clicks Next to walk through the canonical scenario. Answers guiding question #1: *how is data stored, read, written, propagated?* *(v1.2: Story mode is dropped as a built deliverable — replaced by **annotated replay**: a recorded sandbox session (action log) annotated in MDX. The primary learner is the builder; authoring annotations is itself active recall.)*
 
 **Mode 2 — Sandbox (free play).** RaftScope style: a live cluster/data structure; the user sends requests, adds data, tweaks parameters (node count, quorum size, memtable threshold...) and watches the system react. A **metrics panel** displays real-time numbers (throughput, latency, disk reads, replication lag) to answer question #2: *what is the system trading away?*
 
@@ -102,7 +104,7 @@ The key decisions:
 
 **Discrete event simulation with a virtual clock.** No real `setTimeout`. Everything is an event in a priority queue ordered by virtual time. Benefits: (a) fast-forward/slow-motion/pause at will, (b) the **timeline scrubber** — drag backwards through time to replay every step, the killer feature for learning, (c) testable with ordinary unit tests.
 
-**Timeline scrubber — mechanism: hybrid snapshot + replay.** Snapshot the entire sim state every N events (N ≈ 500–1000, tuned by benchmark in Phase 0); scrubbing to time *t* = restore the nearest snapshot ≤ *t*, then deterministically replay up to *t*. The constraint this imposes on the whole engine: **state must be immutable and serializable** (plain objects, structural sharing on update), and every side effect may only arise through the event queue — no out-of-band mutation.
+**Timeline scrubber — mechanism: hybrid snapshot + replay.** Snapshot the entire sim state every N events (N = 500, validated by the Phase 0 scrub benchmark); scrubbing to time *t* = restore the nearest snapshot ≤ *t*, then deterministically replay up to *t*. The constraint this imposes on the whole engine: **state must be immutable and serializable** (plain objects; the engine deep-clones via `structuredClone` on snapshot/restore), and every side effect may only arise through the event queue — no out-of-band mutation.
 
 **Determinism via seeded RNG.** Same seed + same action sequence = same result. Enables: sharing a scenario by URL, writing Chaos Challenges with verifiable answers, and replaying bugs.
 
@@ -110,20 +112,20 @@ The key decisions:
 
 **Nodes are explicit state machines — hand-written pure reducers.** Each node is a pure reducer `(state, event) => [state', effects[]]`: receive an event → return new state + a list of effects (messages to send, timers to set). This is exactly the actor model, and exactly how the book describes the protocols — the code will read like the pseudocode in the papers. **Decision: no XState.** Reasons: (a) no repo in the current stack uses XState (verified across every `package.json` in `~/Projects/Personal`); (b) XState v5 runs actors/delays on real timers by default — embedding it into a discrete event loop with a virtual clock requires a custom clock, directly contradicting the "no real `setTimeout`" principle above; (c) the "statecharts render themselves into diagrams" benefit is overstated — the Stately inspector is a dev tool, not a free in-app embed. If Phase 3 (Raft) shows the statecharts are complex enough to need tooling, run an XState-under-virtual-clock spike then (see Appendix — Open Questions).
 
-**Module contract — deliverable #1 of Phase 0.** "Every later lab is just a plug-in" is only true when the contract is explicit. v0.1 (validated by the Phase 0 engine, `src/engine/module.ts`):
+**Module contract — deliverable #1 of Phase 0.** "Every later lab is just a plug-in" is only true when the contract is explicit. v0.2 (validated by the Phase 0 engine and the Phase 1 replication lab, `src/engine/module.ts`):
 
 ```ts
-interface SimModule<S, P> {
+interface SimModule<S, P = unknown> {
   id: string;                                       // 'lsm-tree' | 'raft' | ...
   chaos: ChaosCapability[];                         // the vocabulary this lab supports
   init(nodeId: NodeId, config: ModuleConfig, rng: SeededRng): S;
-  reduce(state: S, event: ModuleEvent<P>, rng: SeededRng): [S, Effect[]]; // pure
-  metrics(states: Map<NodeId, S>): MetricSample[];  // countable numbers for the panel
+  reduce(state: S, event: ModuleEvent<P>, rng: SeededRng): [S, Effect[]]; // pure; event carries virtual time
+  metrics(states: Map<NodeId, S>, time: number): MetricSample[];  // countable numbers for the panel
   inspect(state: S): InspectorTree;                 // state exposed to the renderer
 }
 ```
 
-The chaos vocabulary splits into two families: **network chaos** (kill node, partition, delay/drop/duplicate/reorder messages, clock skew — for the distributed labs) and **storage chaos** (crash-mid-write, torn write, disk-full — for the Chapter 3 lab, which has no network). Each module declares the capabilities it supports via `chaos: ChaosCapability[]`; the Chaos Toolbar renders dynamically from that declaration. The contract is validated by the first two labs (replication — network; LSM/B-tree — storage) before it is considered stable.
+The chaos vocabulary splits into two families: **network chaos** (kill node, partition, delay/drop/duplicate/reorder messages, clock skew — for the distributed labs) and **storage chaos** (crash-mid-write, torn write, disk-full — for the Chapter 3 lab, which has no network). Each module declares the capabilities it supports via `chaos: ChaosCapability[]`; the Chaos Toolbar renders dynamically from that declaration. The contract is validated by the first two labs (replication — network; LSM/B-tree — storage) before it is considered stable. *(v1.2 status: `reorder` is not a `ChaosCapability` — reordering emerges from randomized per-message latency. `clock-skew` and the storage family are declared vocabulary without an engine delivery path yet; decide before Ch3/Ch8 — see `docs/superpowers/plans/phase1-carry-forward.md`.)*
 
 **Simulation runs in a Web Worker** for heavy labs (batch processing, large clusters) to keep the UI smooth; events are batched back to the main thread via postMessage.
 
@@ -179,25 +181,32 @@ The project succeeds when: (1) you can explain every lab to someone else without
 
 ### Definition of Done — Phase 0 (measurable)
 
-- [ ] Same seed + same action log → identical event-log hash across 100 consecutive runs (automated test).
-- [ ] Scrubbing backwards across 10k events to any point < 100 ms (benchmark in CI).
-- [ ] 3-node ping-pong demo passes property tests (fast-check) under random delay/drop/reorder.
-- [ ] Simulation core has 0 dependencies on React/DOM (enforced by an import lint rule).
-- [ ] Module contract v0 validated by at least 1 mock module (ping-pong) implementing the full interface.
-- [ ] Simulation core coverage ≥ 80%.
+- [x] Same seed + same action log → identical event-log hash across 100 consecutive runs (automated test).
+- [x] Scrubbing backwards across 10k events to any point < 100 ms (benchmark in CI).
+- [x] 3-node ping-pong demo passes property tests (fast-check) under random delay/drop/reorder.
+- [x] Simulation core has 0 dependencies on React/DOM (enforced by an import lint rule).
+- [x] Module contract v0 validated by at least 1 mock module (ping-pong) implementing the full interface.
+- [x] Simulation core coverage ≥ 80%.
 
 ### Definition of Done — Phase 1 (measurable)
 
-- [ ] The Replication lab runs all 3 modes (Story/Sandbox/Chaos).
-- [ ] 3 chaos challenges, each with win/lose conditions verified automatically by the engine (no grading by eye).
-- [ ] Metrics panel displays ≥ 3 real-time numbers (e.g. replication lag, write throughput, stale-read count).
+*(v1.2 — replaced by the Lab Kit slice DoD; spec: `docs/superpowers/specs/2026-07-10-phase1-lab-kit-design.md`.)*
+
+- [ ] Replication lab (leader-follower) sandbox + chaos runs in the browser.
+- [ ] "Stale read" chaos challenge with an engine-verified win condition (no grading by eye).
+- [ ] Metrics panel shows ≥ 3 live numbers (replication lag, write throughput, stale-read count).
+- [ ] Predict-before-run and surprise journal persist across reload (localStorage).
 - [ ] Property test: a write acknowledged under sync replication is never lost when 1 follower dies.
 - [ ] Debrief page published with the Chapter 5 notes (in-repo MDX).
-- [ ] Share URL `?seed=&scenario=` exactly reproduces all 3 scripted scenarios.
+- [ ] CI green: typecheck + lint + coverage ≥ 80% (engine+modules) + 10k-scrub benchmark.
+- [ ] Bundle ≤ 500 KB gzip (measured in CI).
+- [ ] Site live on GitHub Pages, deployed by CI from master.
 
 ## Appendix — Open Questions (deferred)
 
 - **(a) Content language for labs/debriefs:** English (portfolio reach — §9 says the public repo is a portfolio piece) vs Vietnamese (learning speed). Decide before Phase 1 since it shapes the whole content pipeline.
 - **(b) Knowledge base sync:** should the in-repo MDX notes sync to an external system (graphify/Notion), or is the repo the single source of truth?
-- **(c) Concrete deploy target:** Vercel vs GitHub Pages; custom domain or not. Does not block Phase 0.
+- **(c) Deploy target — RESOLVED (v1.2):** GitHub Pages, deployed by GitHub Actions from master. Custom domain still open.
 - **(d) XState spike in Phase 3:** when the statecharts get complex (Raft election), is it worth re-trying XState under the virtual clock — only consider if the pure reducers start becoming hard to read.
+- **(e) RNG stream split:** module logic and network chaos share one SeededRng stream — a reducer's extra draw shifts downstream network fates for the same seed. Split into decoupled streams if per-module hash stability matters. Decide before Phase 3 (Raft election jitter). See `docs/superpowers/plans/phase1-carry-forward.md`.
+- **(f) Share URLs `?seed=&scenario=`:** deferred from Phase 1 (v1.2) — action-log export/import covers the self-learning use case; revisit when labs get an audience.

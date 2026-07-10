@@ -6,6 +6,8 @@ Version 1.1 — handoff-ready.
 
 > **v1.1 changelog (post-review):** §6 chuyển thành Tech Stack — Final Decisions: loại XState (chốt pure reducer tự viết), React 18 → React 19, Framer Motion → package `motion`, thêm perf budget. §5 thêm cơ chế Timeline scrubber (hybrid snapshot + replay), Module contract v0, Determinism & input recording, rAF batching cho UI bridge. §1 thêm Non-goals. §3 chốt knowledge base in-repo MDX; đánh dấu citation-needed cho paper RAFT attack. §4 Ch9 ghi rõ thuật toán linearizability check. §9 thêm Definition of Done đo được cho Phase 0/1. §2 sửa citation Oddity. Thêm Appendix — Open Questions.
 
+> **v1.2 (2026-07-10):** Từ v1.2, bản tiếng Anh `DESIGN_PLAN.en.md` là bản canonical — Story mode → annotated replay, contract v0.2, DoD Phase 1 v2, chốt deploy GitHub Pages. Bản tiếng Việt này giữ nguyên nội dung v1.1 làm tài liệu gốc.
+
 ---
 
 ## 1. Tầm nhìn sản phẩm
