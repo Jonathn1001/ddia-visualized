@@ -17,3 +17,36 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run coverage
+      - run: npm run build
+      - name: Bundle budget (app shell + engine ≤ 500 KB gzip)
+        run: |
+          size=$(cat dist/assets/*.js | gzip -c | wc -c)
+          echo "gzipped JS bytes: $size"
+          test "$size" -le 512000
+
+  deploy:
+    if: github.ref == 'refs/heads/master'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: BASE_PATH=/ddia-visualized/ npm run build
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - id: deployment
+        uses: actions/deploy-pages@v4
