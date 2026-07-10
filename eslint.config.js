@@ -17,6 +17,10 @@ export default tseslint.config(
               group: ['react', 'react-*', 'react/*', '*react*', 'zustand', 'zustand/*', 'motion', 'motion/*'],
               message: 'Simulation core must stay free of UI dependencies (DESIGN_PLAN §5).',
             },
+            {
+              group: ['**/ui/**'],
+              message: 'Simulation core must not import the UI layer (DESIGN_PLAN §5).',
+            },
           ],
         },
       ],
@@ -38,7 +42,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['src/**/*.test.ts'],
+    files: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     rules: {
       'no-restricted-globals': 'off',
       'no-restricted-properties': 'off',
