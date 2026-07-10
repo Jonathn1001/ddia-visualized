@@ -16,7 +16,10 @@ export function fnv1a(str: string, hash = 0x811c9dc5): number {
 export function hashEventLog(log: readonly LoggedEvent[]): string {
   let h = 0x811c9dc5;
   for (const e of log) {
-    h = fnv1a(`${e.index}|${e.time}|${e.target}|${e.kind}|${e.from ?? ''}|${JSON.stringify(e.payload)}`, h);
+    h = fnv1a(
+      `${e.index}|${e.time}|${e.target}|${e.kind}|${e.from ?? ''}|${e.delivered ? 1 : 0}|${e.dropReason ?? ''}|${JSON.stringify(e.payload)}`,
+      h,
+    );
   }
   return h.toString(16).padStart(8, '0');
 }

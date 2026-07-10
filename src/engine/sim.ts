@@ -18,6 +18,9 @@ export interface LoggedEvent {
   kind: SimEvent['kind'];
   from?: NodeId;
   payload: unknown;
+  /** False when the event was skipped at delivery (dead target or partition). */
+  delivered: boolean;
+  dropReason?: 'dead-node' | 'partition';
 }
 
 export interface SimSnapshot {
@@ -95,6 +98,11 @@ export class Simulation<S, P = unknown> {
     return s;
   }
 
+  /** Currently-killed nodes — cheap accessor for the UI bridge. */
+  deadNodes(): NodeId[] {
+    return [...this.dead];
+  }
+
   get pending(): number {
     return this.queue.size;
   }
@@ -119,6 +127,18 @@ export class Simulation<S, P = unknown> {
     const e = this.queue.pop();
     if (!e) return undefined;
     this.time = e.time;
+    const isControl = e.kind === 'control';
+    const deadTarget = !isControl && this.dead.has(e.target);
+    // Recheck reachability at delivery, not just at send: a partition may form
+    // between send and delivery, and an in-flight message is then lost.
+    // Deterministic because network state at the virtual delivery time is
+    // itself deterministic. Dead-node takes precedence over partition.
+    const blocked =
+      !isControl &&
+      !deadTarget &&
+      e.kind === 'message' &&
+      e.from !== undefined &&
+      !this.network.canReach(e.from, e.target);
     const logged: LoggedEvent = {
       index: this.processed,
       time: e.time,
@@ -126,20 +146,17 @@ export class Simulation<S, P = unknown> {
       kind: e.kind,
       from: e.from,
       payload: e.payload,
+      delivered: !deadTarget && !blocked,
+      ...(deadTarget ? { dropReason: 'dead-node' as const } : blocked ? { dropReason: 'partition' as const } : {}),
     };
     this.eventLog.push(logged);
     this.processed++;
 
-    if (e.kind === 'control') {
+    if (isControl) {
       this.applyControl(e.payload as ControlAction);
       return logged;
     }
-    // Recheck reachability at delivery, not just at send: a partition may form
-    // between send and delivery, and an in-flight message is then lost. Mirrors
-    // the dead-node recheck below; deterministic because network state at the
-    // virtual delivery time is itself deterministic.
-    const blocked = e.kind === 'message' && e.from !== undefined && !this.network.canReach(e.from, e.target);
-    if (!this.dead.has(e.target) && !blocked) {
+    if (logged.delivered) {
       const mev: ModuleEvent<P> = {
         kind: e.kind as ModuleEvent<P>['kind'],
         self: e.target,

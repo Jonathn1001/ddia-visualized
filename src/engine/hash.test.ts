@@ -15,6 +15,7 @@ test('hashEventLog is order- and content-sensitive', () => {
     target: 'a',
     kind: 'message',
     payload,
+    delivered: true,
   });
   const h1 = hashEventLog([e(0, 'x'), e(1, 'y')]);
   const h2 = hashEventLog([e(0, 'y'), e(1, 'x')]);
