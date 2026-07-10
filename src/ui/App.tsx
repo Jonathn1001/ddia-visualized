@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { PingPongLab } from './labs/pingpong/PingPongLab';
+import { Debrief } from './labs/replication/Debrief';
 import { ReplicationLab } from './labs/replication/ReplicationLab';
 
-const TABS = ['replication', 'pingpong'] as const;
+const TABS = ['replication', 'debrief', 'pingpong'] as const;
 type Tab = (typeof TABS)[number];
 
 export default function App() {
@@ -23,7 +24,9 @@ export default function App() {
           ))}
         </nav>
       </header>
-      {tab === 'replication' ? <ReplicationLab /> : <PingPongLab />}
+      {tab === 'replication' && <ReplicationLab />}
+      {tab === 'debrief' && <Debrief />}
+      {tab === 'pingpong' && <PingPongLab />}
     </main>
   );
 }

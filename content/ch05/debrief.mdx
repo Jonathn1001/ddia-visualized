@@ -1,0 +1,24 @@
+# Chapter 5 — Replication: Debrief
+
+## The trade-off you just played with
+
+**Async replication** acks before followers confirm — fast writes, but the ack is a
+promise the leader may not keep: a crash or a dropped append loses acknowledged data,
+and followers serve stale reads in the lag window (you proved this in the challenge).
+
+**Sync replication** acks only after every follower confirms — an acked write survives
+any single follower failure (the property test pins this), but one slow or dead
+follower stalls every write. Real systems compromise: semi-synchronous (one sync
+follower), or quorum acks (Ch5's leaderless variant — a later lab iteration).
+
+## What real systems do
+
+- **PostgreSQL**: `synchronous_commit` / `synchronous_standby_names` — per-transaction
+  choice on this exact dial.
+- **MySQL**: semi-sync plugin — at least one follower ack.
+- **Kafka**: `acks=1` vs `acks=all` + `min.insync.replicas` — same dial, log-speak.
+
+## Terms
+
+*replication lag* · *read-after-write consistency* · *monotonic reads* — the lag
+window you exploited is why these read-consistency models exist.

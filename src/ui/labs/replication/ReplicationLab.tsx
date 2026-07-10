@@ -52,6 +52,20 @@ export function ReplicationLab() {
         >
           reset (new seed)
         </button>
+        <button
+          className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600"
+          onClick={() => {
+            const json = driver.exportSession(localStorage.getItem('ddia:ch05:journal') ?? undefined);
+            const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `ddia-ch05-session-${driver.seed}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+          }}
+        >
+          export session
+        </button>
       </div>
       <TimelineScrubber
         processed={view.processed}
