@@ -47,8 +47,8 @@ export function ClusterView({
               cx={q.x}
               cy={q.y}
               r={NODE_R}
-              animate={{ opacity: n.dead ? 0.25 : 1 }}
-              className="fill-set"
+              animate={{ opacity: n.dead ? 0.55 : 1 }}
+              className={n.dead ? 'fill-sign' : 'fill-set'}
             />
             <text x={q.x} y={q.y + 5} textAnchor="middle" className="fill-ink text-xs font-mono font-bold">
               {n.id}

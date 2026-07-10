@@ -192,15 +192,15 @@ The project succeeds when: (1) you can explain every lab to someone else without
 
 *(v1.2 — replaced by the Lab Kit slice DoD; spec: `docs/superpowers/specs/2026-07-10-phase1-lab-kit-design.md`.)*
 
-- [ ] Replication lab (leader-follower) sandbox + chaos runs in the browser.
-- [ ] "Stale read" chaos challenge with an engine-verified win condition (no grading by eye).
-- [ ] Metrics panel shows ≥ 3 live numbers (replication lag, write throughput, stale-read count).
-- [ ] Predict-before-run and surprise journal persist across reload (localStorage).
-- [ ] Property test: a write acknowledged under sync replication is never lost when 1 follower dies.
-- [ ] Debrief page published with the Chapter 5 notes (in-repo MDX).
-- [ ] CI green: typecheck + lint + coverage ≥ 80% (engine+modules) + 10k-scrub benchmark.
-- [ ] Bundle ≤ 500 KB gzip (measured in CI).
-- [ ] Site live on GitHub Pages, deployed by CI from master.
+- [x] Replication lab (leader-follower) sandbox + chaos runs in the browser.
+- [x] "Stale read" chaos challenge with an engine-verified win condition (no grading by eye).
+- [x] Metrics panel shows ≥ 3 live numbers (replication lag, write throughput, stale-read count).
+- [x] Predict-before-run and surprise journal persist across reload (localStorage).
+- [x] Property test: a write acknowledged under sync replication is never lost when 1 follower dies.
+- [x] Debrief page published with the Chapter 5 notes (in-repo MDX).
+- [x] CI green: typecheck + lint + coverage ≥ 80% (engine+modules) + 10k-scrub benchmark.
+- [x] Bundle ≤ 500 KB gzip (measured in CI).
+- [x] Site live on GitHub Pages, deployed by CI from master.
 
 ## Appendix — Open Questions (deferred)
 
