@@ -161,6 +161,7 @@ export class Simulation<S, P = unknown> {
         kind: e.kind as ModuleEvent<P>['kind'],
         self: e.target,
         from: e.from,
+        time: e.time,
         payload: e.payload as P,
       };
       const [next, effects] = this.module.reduce(this.states.get(e.target)!, mev, this.rng);
@@ -185,7 +186,7 @@ export class Simulation<S, P = unknown> {
         this.network.heal();
         break;
       case 'net':
-        Object.assign(this.network.opts, a.opts);
+        Object.assign(this.network.opts, structuredClone(a.opts));
         break;
     }
   }

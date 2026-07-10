@@ -48,7 +48,7 @@ test('metrics and inspect implement the contract', () => {
   const sim = mk();
   sim.runUntil(500);
   const states = new Map(NODES.map((id) => [id, sim.getState(id)]));
-  const metrics = pingPong.metrics(states);
+  const metrics = pingPong.metrics(states, sim.time);
   expect(metrics.map((m) => m.name)).toEqual(['max-token', 'total-delivered']);
   expect(metrics[0].value).toBeGreaterThan(0);
   expect(pingPong.inspect(sim.getState('n0'))).toMatchObject({ self: 'n0' });
