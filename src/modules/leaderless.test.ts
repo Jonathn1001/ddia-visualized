@@ -103,3 +103,29 @@ test('sloppy loss: acked write vanishes when fallbacks die before handoff', () =
   expect(lost!.ack.key).toBe('x');
   expect(lost!.coordinator).toBe('E');
 });
+
+test('read that cannot reach r replies fails after the op timeout', () => {
+  const sim = makeSim({ w: 2, r: 3 }); // r=3 needs all three home replicas to reply
+  sim.runSteps(5);
+  sim.external('A', { cmd: 'write', key: 'x', value: '1' });
+  sim.runUntil(1000); // A + B ack (w=2)
+  sim.control({ type: 'partition', groups: [['A', 'B', 'D', 'E'], ['C']] }); // C unreachable
+  sim.external('A', { cmd: 'read', key: 'x' });
+  sim.runUntil(2000);
+  // A + B reply (2), C is partitioned -> 2 < r=3 -> the read never resolves -> timeout.
+  expect(sim.getState('A').history.filter((h) => h.type === 'read')).toHaveLength(0);
+  const failed = sim.getState('A').history.filter((h) => h.type === 'failed-read');
+  expect(failed).toHaveLength(1);
+  expect(failed[0]).toMatchObject({ node: 'A', key: 'x' });
+});
+
+test('a read that reaches its quorum records a read, never a failed-read', () => {
+  const sim = makeSim({ w: 2, r: 2 });
+  sim.runSteps(5);
+  sim.external('A', { cmd: 'write', key: 'x', value: '1' });
+  sim.runUntil(1000);
+  sim.external('A', { cmd: 'read', key: 'x' });
+  sim.runUntil(2000); // the op-timeout fires here, but the read already resolved -> no-op
+  expect(sim.getState('A').history.filter((h) => h.type === 'read')).toHaveLength(1);
+  expect(sim.getState('A').history.filter((h) => h.type === 'failed-read')).toHaveLength(0);
+});

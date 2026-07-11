@@ -14,7 +14,8 @@ export type LLHistory =
   | { type: 'ack'; key: string; ts: number; time: number }
   | { type: 'failed-write'; key: string; time: number }
   | { type: 'read'; node: NodeId; key: string; returnedTs: number; time: number }
-  | { type: 'read-repair'; key: string; to: NodeId; time: number };
+  | { type: 'read-repair'; key: string; to: NodeId; time: number }
+  | { type: 'failed-read'; node: NodeId; key: string; time: number };
 
 interface PendingWrite {
   kind: 'write';
@@ -120,16 +121,15 @@ function handleClient(s: LLState, ev: ModuleEvent<LLPayload>): [LLState, Effect[
     return [{ ...s, nextOp: opId + 1, pending: { ...s.pending, [opId]: op } }, effects];
   }
   const op: PendingRead = { kind: 'read', key: p.key, replies: [], done: false };
-  // NOTE: reads have no op-timeout / failed-read path (unlike writes). Every
-  // scripted lab scenario heals partitions before reading, so w+r>n overlap
-  // guarantees r replies. A read that can never reach r replies stays pending
-  // by design; adding a failed-read variant would expand LLHistory — tracked
-  // as a follow-up, not implemented here.
+  // Reads fan `get` to the home replicas and arm an op-timeout: if fewer than r
+  // replies are reachable (dead or partitioned replicas), the timeout records a
+  // `failed-read` instead of leaving the op pending forever.
   const effects: Effect[] = s.home.map((n) => ({
     type: 'send',
     to: n,
     payload: { msg: 'get', opId, key: p.key },
   }));
+  effects.push({ type: 'timer', delay: OP_TIMEOUT_MS, payload: { timer: 'op-timeout', opId } });
   return [{ ...s, nextOp: opId + 1, pending: { ...s.pending, [opId]: op } }, effects];
 }
 
@@ -252,7 +252,19 @@ function handleTimer(s: LLState, ev: ModuleEvent<LLPayload>): [LLState, Effect[]
   }
   // op-timeout
   const op = s.pending[p.opId];
-  if (!op || op.kind !== 'write' || op.done) return [s, []];
+  if (!op || op.done) return [s, []];
+  if (op.kind === 'read') {
+    // The read never gathered r reachable replies — surface it as a failure
+    // rather than leaving the op pending forever.
+    return [
+      {
+        ...s,
+        pending: { ...s.pending, [p.opId]: { ...op, done: true } },
+        history: [...s.history, { type: 'failed-read', node: s.self, key: op.key, time: ev.time }],
+      },
+      [],
+    ];
+  }
   if (!s.sloppy || op.hinted) {
     return [
       {
@@ -308,6 +320,7 @@ export const leaderless: SimModule<LLState, LLPayload> = {
   metrics(states) {
     let acked = 0;
     let failed = 0;
+    let failedReads = 0;
     let repairs = 0;
     let hints = 0;
     for (const s of states.values()) {
@@ -315,12 +328,14 @@ export const leaderless: SimModule<LLState, LLPayload> = {
       for (const h of s.history) {
         if (h.type === 'ack') acked++;
         else if (h.type === 'failed-write') failed++;
+        else if (h.type === 'failed-read') failedReads++;
         else if (h.type === 'read-repair') repairs++;
       }
     }
     return [
       { name: 'acked-writes', value: acked },
       { name: 'failed-writes', value: failed },
+      { name: 'failed-reads', value: failedReads },
       { name: 'read-repairs', value: repairs },
       { name: 'hints-outstanding', value: hints },
     ];
