@@ -1,5 +1,5 @@
 import { fnv1a, type NodeId } from '../../engine';
-import { buildRing } from '../../modules/hashring';
+import { buildRing, HOTSPOT_MIN_KEYS } from '../../modules/hashring';
 
 /** Stable per-node hues, indexed by pool position (same precedent as MetricsPanel's palette). */
 const NODE_COLORS = ['#0ea5e9', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
@@ -75,7 +75,7 @@ export function RingView({
         <p className="text-dim">load ({total} keys)</p>
         {members.map((m) => {
           const load = loads.get(m) ?? 0;
-          const hot = total >= 12 && fair > 0 && load >= 2 * fair;
+          const hot = total >= HOTSPOT_MIN_KEYS && fair > 0 && load >= 2 * fair;
           return (
             <div key={m} data-load={m} className="flex items-center gap-2">
               <span className="w-4" style={{ color: colorOf(m) }}>
