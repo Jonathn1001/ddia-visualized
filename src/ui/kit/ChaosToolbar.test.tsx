@@ -63,3 +63,12 @@ test('split is disabled until a proper subset is selected', () => {
   fireEvent.click(screen.getByLabelText('isolate B'));
   expect(split.disabled).toBe(true); // all nodes selected = no split
 });
+
+test('duplicate slider dispatches a duplicateRate net action', () => {
+  const actions: ControlAction[] = [];
+  render(
+    <ChaosToolbar caps={['duplicate']} nodeIds={['a']} deadNodes={[]} onAction={(a) => actions.push(a)} />,
+  );
+  fireEvent.change(screen.getByRole('slider'), { target: { value: '50' } });
+  expect(actions).toEqual([{ type: 'net', opts: { duplicateRate: 0.5 } }]);
+});
