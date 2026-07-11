@@ -6,6 +6,7 @@ import { ACTIVE_LAB_ID } from './shell/catalog';
 import { PingPongLab } from './labs/pingpong/PingPongLab';
 import { Debrief } from './labs/replication/Debrief';
 import { ReplicationLab } from './labs/replication/ReplicationLab';
+import { MultiLeaderLab } from './labs/multileader/MultiLeaderLab';
 
 interface Page {
   eyebrow: string;
@@ -21,6 +22,13 @@ const PAGES: Record<string, Omit<Page, 'body'> & { Component: () => ReactNode }>
     thesis:
       'A leader and two followers. In async mode the leader acknowledges writes it has not replicated yet — the ack is a promise it may not keep. Slow the network down, read from a follower, and catch the lie yourself.',
     Component: ReplicationLab,
+  },
+  '5.2': {
+    eyebrow: 'Chapter 5 — Replication',
+    title: 'Multi-Leader: Write Conflicts',
+    thesis:
+      'Two datacenters, both accepting writes, replicating to each other asynchronously. Concurrent writes to the same key conflict; last-write-wins resolves them by silently throwing one away — even one that was already acknowledged. Make it happen.',
+    Component: MultiLeaderLab,
   },
   '5.d': {
     eyebrow: 'Chapter 5 — Debrief',
