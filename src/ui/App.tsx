@@ -8,6 +8,7 @@ import { Debrief } from './labs/replication/Debrief';
 import { ReplicationLab } from './labs/replication/ReplicationLab';
 import { MultiLeaderLab } from './labs/multileader/MultiLeaderLab';
 import { LeaderlessLab } from './labs/leaderless/LeaderlessLab';
+import { HashRingLab } from './labs/hashring/HashRingLab';
 
 interface Page {
   eyebrow: string;
@@ -51,6 +52,13 @@ const PAGES: Record<string, Omit<Page, 'body'> & { Component: () => ReactNode }>
     thesis:
       'Three nodes pass an incrementing token with retransmission. The module that validated the SimModule contract — kill a node and watch the ring heal when you revive it.',
     Component: PingPongLab,
+  },
+  '6.1': {
+    eyebrow: 'Chapter 6 — Partitioning',
+    title: 'Consistent Hashing Ring',
+    thesis:
+      'Keys and nodes hash onto the same circle; a key belongs to the first node clockwise. Add a node and only its arcs move — remove one and its keys slide to the successors. Naive hash-mod-N would reshuffle almost everything. Skew the ring until one node does double work.',
+    Component: HashRingLab,
   },
 };
 

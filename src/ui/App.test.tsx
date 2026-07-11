@@ -19,3 +19,10 @@ test('sidebar navigates between labs; unbuilt labs disabled', () => {
   const soonBtn = screen.getByText('LSM-Tree vs B-Tree').closest('button')!;
   expect(soonBtn.disabled).toBe(true);
 });
+
+test('hash ring lab renders from the sidebar', () => {
+  render(<App />);
+  fireEvent.click(screen.getByText('Consistent Hashing Ring'));
+  expect(screen.getByText('Consistent Hashing Ring', { selector: 'h1' })).toBeTruthy();
+  expect(screen.getByText('add node')).toBeTruthy();
+});
