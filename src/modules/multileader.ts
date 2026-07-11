@@ -101,7 +101,11 @@ export const multiLeader: SimModule<MLState, MLPayload> = {
           [],
         ];
       }
-      if (cur.ts === p.ts && cur.origin === p.origin) return [state, []]; // duplicate delivery
+      // Same origin can never be a conflict: an incoming update from the leader
+      // that also owns the current value is that leader's own write arriving
+      // out of order (or an exact duplicate) — a causal self-overwrite, not a
+      // discarded conflict. Only cross-origin LWW losses are recorded.
+      if (cur.origin === p.origin) return [state, []];
       return [
         {
           ...state,
