@@ -7,6 +7,7 @@ import { PingPongLab } from './labs/pingpong/PingPongLab';
 import { Debrief } from './labs/replication/Debrief';
 import { ReplicationLab } from './labs/replication/ReplicationLab';
 import { MultiLeaderLab } from './labs/multileader/MultiLeaderLab';
+import { LeaderlessLab } from './labs/leaderless/LeaderlessLab';
 
 interface Page {
   eyebrow: string;
@@ -29,6 +30,13 @@ const PAGES: Record<string, Omit<Page, 'body'> & { Component: () => ReactNode }>
     thesis:
       'Two datacenters, both accepting writes, replicating to each other asynchronously. Concurrent writes to the same key conflict; last-write-wins resolves them by silently throwing one away — even one that was already acknowledged. Make it happen.',
     Component: MultiLeaderLab,
+  },
+  '5.3': {
+    eyebrow: 'Chapter 5 — Replication',
+    title: 'Leaderless: Quorum Reads & Writes',
+    thesis:
+      'No leader — any node coordinates. Writes succeed at w of 3 home replicas, reads consult r; w+r>n guarantees overlap. Sloppy quorum trades that guarantee for availability: hints on fallback nodes count toward w, and a hint that dies before handoff takes an acknowledged write with it.',
+    Component: LeaderlessLab,
   },
   '5.d': {
     eyebrow: 'Chapter 5 — Debrief',
