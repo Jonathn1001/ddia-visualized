@@ -34,6 +34,8 @@ export const CATALOG: Chapter[] = [
     title: 'Ch.5 — Replication',
     labs: [
       { id: '5.1', label: 'Replication Theater', status: 'active' },
+      { id: '5.2', label: 'Multi-Leader Conflicts', status: 'active' },
+      { id: '5.3', label: 'Leaderless Quorum', status: 'active' },
       { id: '5.d', label: 'Debrief & Journal', status: 'active' },
     ],
   },

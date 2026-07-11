@@ -1,16 +1,17 @@
 import { useState } from 'react';
-import type { NodeId } from '../../../engine';
-import { btn, inputBox } from '../../kit/classes';
+import type { NodeId } from '../../engine';
+import { btn, inputBox } from './classes';
 
-export function ClientControls({
-  nodeIds,
-  leader,
+/** Key/value client controls: write and read buttons per declared target node. */
+export function KVControls({
+  writeTargets,
+  readTargets,
   onWrite,
   onRead,
 }: {
-  nodeIds: NodeId[];
-  leader: NodeId;
-  onWrite: (key: string, value: string) => void;
+  writeTargets: NodeId[];
+  readTargets: NodeId[];
+  onWrite: (node: NodeId, key: string, value: string) => void;
   onRead: (node: NodeId, key: string) => void;
 }) {
   const [key, setKey] = useState('x');
@@ -29,11 +30,13 @@ export function ClientControls({
         onChange={(e) => setValue(e.target.value)}
         aria-label="value"
       />
-      <button className={btn} onClick={() => onWrite(key, value)}>
-        write → {leader}
-      </button>
-      {nodeIds.map((id) => (
-        <button key={id} className={btn} onClick={() => onRead(id, key)}>
+      {writeTargets.map((id) => (
+        <button key={`w-${id}`} className={btn} onClick={() => onWrite(id, key, value)}>
+          write @ {id}
+        </button>
+      ))}
+      {readTargets.map((id) => (
+        <button key={`r-${id}`} className={btn} onClick={() => onRead(id, key)}>
           read @ {id}
         </button>
       ))}

@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Simulation, type NodeId } from '../../../engine';
 import {
-  detectStaleRead,
-  replication,
-  type RepMode,
-  type RepPayload,
-  type RepState,
-} from '../../../modules/replication';
+  detectLostWrite,
+  multiLeader,
+  type MLPayload,
+  type MLState,
+} from '../../../modules/multileader';
 import { SimDriver } from '../../bridge/SimDriver';
 import { useSimStore } from '../../bridge/simStore';
 import { ChaosToolbar } from '../../kit/ChaosToolbar';
@@ -17,22 +16,21 @@ import { MetricsPanel } from '../../kit/MetricsPanel';
 import { TimelineScrubber } from '../../kit/TimelineScrubber';
 import { btn } from '../../kit/classes';
 
-const NODE_IDS = ['L', 'F1', 'F2'];
+const NODE_IDS = ['DC1', 'DC2'];
 
-export function ReplicationLab() {
-  const [mode, setMode] = useState<RepMode>('async');
-  const [epoch, setEpoch] = useState(0); // bump to rebuild with a fresh seed
-  const ref = useRef<{ driver: SimDriver<RepState, RepPayload>; key: string } | null>(null);
-  const simKey = `${mode}:${epoch}`;
+export function MultiLeaderLab() {
+  const [epoch, setEpoch] = useState(0);
+  const ref = useRef<{ driver: SimDriver<MLState, MLPayload>; key: string } | null>(null);
+  const simKey = `${epoch}`;
   if (!ref.current || ref.current.key !== simKey) {
     ref.current?.driver.pause();
     useSimStore.getState().reset();
-    const seed = 1000 + epoch;
-    const sim = new Simulation<RepState, RepPayload>({
-      module: replication,
-      config: { nodeIds: NODE_IDS, params: { mode } },
+    const seed = 2000 + epoch;
+    const sim = new Simulation<MLState, MLPayload>({
+      module: multiLeader,
+      config: { nodeIds: NODE_IDS },
       seed,
-      network: { latency: [10, 80] },
+      network: { latency: [30, 120] }, // wide window: concurrent writes are easy to produce
     });
     ref.current = {
       driver: new SimDriver({ sim, seed, publish: (v) => useSimStore.getState().publish(v) }),
@@ -44,36 +42,16 @@ export function ReplicationLab() {
   const view = useSimStore();
 
   const statesOf = () =>
-    new Map<NodeId, RepState>(
+    new Map<NodeId, MLState>(
       driver.sim.config.nodeIds.map((id) => [id, driver.sim.getState(id)] as const),
     );
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3 text-xs font-mono">
-        <span>replication:</span>
-        {(['async', 'sync'] as const).map((m) => (
-          <label key={m} className="flex items-center gap-1">
-            <input type="radio" checked={mode === m} onChange={() => setMode(m)} />
-            {m}
-          </label>
-        ))}
+        <span>two leaders, async cross-replication, LWW</span>
         <button className={btn} onClick={() => setEpoch((e) => e + 1)}>
           reset (new seed)
-        </button>
-        <button
-          className={btn}
-          onClick={() => {
-            const json = driver.exportSession(localStorage.getItem('ddia:ch05:journal') ?? undefined);
-            const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `ddia-ch05-session-${driver.seed}.json`;
-            a.click();
-            URL.revokeObjectURL(url);
-          }}
-        >
-          export session
         </button>
       </div>
       <TimelineScrubber
@@ -89,30 +67,30 @@ export function ReplicationLab() {
         <MetricsPanel history={view.metricsHistory} />
       </div>
       <KVControls
-        writeTargets={['L']}
+        writeTargets={NODE_IDS}
         readTargets={NODE_IDS}
         onWrite={(node, key, value) => driver.external(node, { cmd: 'write', key, value })}
         onRead={(node, key) => driver.external(node, { cmd: 'read', key })}
       />
       <ChaosToolbar
-        caps={replication.chaos}
+        caps={multiLeader.chaos}
         nodeIds={NODE_IDS}
         deadNodes={view.nodes.filter((n) => n.dead).map((n) => n.id)}
         onAction={(a) => driver.control(a)}
       />
       <ChallengePanel
-        title="Chaos Challenge: produce a stale read"
-        storageKeyPrefix="ddia:ch05:stale-read"
-        prompt="Predict first: how will you cause a stale read? (skippable)"
-        runningHint="make a read return older data than an acknowledged write."
-        check={() => detectStaleRead(statesOf())}
+        title="Chaos Challenge: make an acked write silently disappear"
+        storageKeyPrefix="ddia:ch05:lost-write"
+        prompt="Predict first: how do two leaders lose an acknowledged write? (skippable)"
+        runningHint="get a write acked at one leader, then have LWW throw it away."
+        check={() => detectLostWrite(statesOf())}
         onWin={() => driver.pause()}
         renderWin={(win, prediction) => (
           <>
             <p>
-              read <code className="text-warn">{win.read.key}</code> @ {win.read.node} returned seq{' '}
-              {win.read.returnedSeq} at t={win.read.time}, after write seq {win.ack.seq} was acked at
-              t={win.ack.time}.
+              write <code className="text-warn">{win.discarded.key}={win.discarded.value}</code> was
+              acked at {win.ack.origin} (t={win.ack.time}), then LWW discarded it — the concurrent
+              write with the higher (ts, origin) won everywhere. No error was ever shown.
             </p>
             <p className="text-dim">your prediction: “{prediction}”</p>
           </>
