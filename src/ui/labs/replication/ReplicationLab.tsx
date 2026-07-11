@@ -1,15 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
-import { Simulation } from '../../../engine';
-import { replication, type RepMode, type RepPayload, type RepState } from '../../../modules/replication';
+import { Simulation, type NodeId } from '../../../engine';
+import {
+  detectStaleRead,
+  replication,
+  type RepMode,
+  type RepPayload,
+  type RepState,
+} from '../../../modules/replication';
 import { SimDriver } from '../../bridge/SimDriver';
 import { useSimStore } from '../../bridge/simStore';
 import { ChaosToolbar } from '../../kit/ChaosToolbar';
+import { ChallengePanel } from '../../kit/ChallengePanel';
 import { ClusterView } from '../../kit/ClusterView';
+import { KVControls } from '../../kit/KVControls';
 import { MetricsPanel } from '../../kit/MetricsPanel';
 import { TimelineScrubber } from '../../kit/TimelineScrubber';
 import { btn } from '../../kit/classes';
-import { ChallengePanel } from './ChallengePanel';
-import { ClientControls } from './ClientControls';
 
 const NODE_IDS = ['L', 'F1', 'F2'];
 
@@ -36,6 +42,11 @@ export function ReplicationLab() {
   const driver = ref.current.driver;
   useEffect(() => () => driver.pause(), [driver]);
   const view = useSimStore();
+
+  const statesOf = () =>
+    new Map<NodeId, RepState>(
+      driver.sim.config.nodeIds.map((id) => [id, driver.sim.getState(id)] as const),
+    );
 
   return (
     <div className="space-y-4">
@@ -77,10 +88,10 @@ export function ReplicationLab() {
         <ClusterView nodes={view.nodes} inFlight={view.inFlight} time={view.time} />
         <MetricsPanel history={view.metricsHistory} />
       </div>
-      <ClientControls
-        nodeIds={NODE_IDS}
-        leader="L"
-        onWrite={(key, value) => driver.external('L', { cmd: 'write', key, value })}
+      <KVControls
+        writeTargets={['L']}
+        readTargets={NODE_IDS}
+        onWrite={(node, key, value) => driver.external(node, { cmd: 'write', key, value })}
         onRead={(node, key) => driver.external(node, { cmd: 'read', key })}
       />
       <ChaosToolbar
@@ -89,7 +100,24 @@ export function ReplicationLab() {
         deadNodes={view.nodes.filter((n) => n.dead).map((n) => n.id)}
         onAction={(a) => driver.control(a)}
       />
-      <ChallengePanel driver={driver} />
+      <ChallengePanel
+        title="Chaos Challenge: produce a stale read"
+        storageKeyPrefix="ddia:ch05:stale-read"
+        prompt="Predict first: how will you cause a stale read? (skippable)"
+        runningHint="make a read return older data than an acknowledged write."
+        check={() => detectStaleRead(statesOf())}
+        onWin={() => driver.pause()}
+        renderWin={(win, prediction) => (
+          <>
+            <p>
+              read <code className="text-warn">{win.read.key}</code> @ {win.read.node} returned seq{' '}
+              {win.read.returnedSeq} at t={win.read.time}, after write seq {win.ack.seq} was acked at
+              t={win.ack.time}.
+            </p>
+            <p className="text-dim">your prediction: “{prediction}”</p>
+          </>
+        )}
+      />
     </div>
   );
 }
