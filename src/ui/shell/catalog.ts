@@ -50,11 +50,6 @@ export const CATALOG: Chapter[] = [
     labs: [{ id: '6.1', label: 'Consistent Hashing Ring', status: 'soon' }],
   },
   {
-    id: 'ch7',
-    title: 'Ch.7 — Transactions',
-    labs: [{ id: '7.1', label: 'Isolation Anomaly Lab', status: 'soon' }],
-  },
-  {
     id: 'ch8',
     title: 'Ch.8 — Distributed Trouble',
     labs: [{ id: '8.1', label: 'Unreliable Network Playground', status: 'soon' }],
@@ -63,6 +58,11 @@ export const CATALOG: Chapter[] = [
     id: 'ch9',
     title: 'Ch.9 — Consistency & Consensus',
     labs: [{ id: '9.1', label: 'Raft + Linearizability Checker', status: 'soon' }],
+  },
+  {
+    id: 'ch7',
+    title: 'Ch.7 — Transactions',
+    labs: [{ id: '7.1', label: 'Isolation Anomaly Lab', status: 'soon' }],
   },
   {
     id: 'ch1',
