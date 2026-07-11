@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { ChaosCapability, ControlAction, NodeId } from '../../engine';
 import { btn } from './classes';
 
@@ -13,6 +14,12 @@ export function ChaosToolbar({
   deadNodes: NodeId[];
   onAction: (a: ControlAction) => void;
 }) {
+  // Local selection for the partition split: checked nodes become one group,
+  // the rest the other. Lets any subset be isolated (e.g. the 5.3 sloppy-loss
+  // script's D,E | A,B,C), not just the first node.
+  const [isolated, setIsolated] = useState<NodeId[]>([]);
+  const toggle = (id: NodeId) =>
+    setIsolated((s) => (s.includes(id) ? s.filter((n) => n !== id) : [...s, id]));
   return (
     <div className="flex flex-wrap items-center gap-2">
       {caps.includes('kill-node') &&
@@ -28,17 +35,41 @@ export function ChaosToolbar({
           ),
         )}
       {caps.includes('partition') && (
-        <>
+        <div className="flex flex-wrap items-center gap-1 text-xs font-mono">
+          <span className="text-dim">partition:</span>
+          {nodeIds.map((id) => (
+            <label key={`iso-${id}`} className="flex items-center gap-0.5">
+              <input
+                type="checkbox"
+                aria-label={`isolate ${id}`}
+                checked={isolated.includes(id)}
+                onChange={() => toggle(id)}
+              />
+              {id}
+            </label>
+          ))}
           <button
             className={btn}
-            onClick={() => onAction({ type: 'partition', groups: [[nodeIds[0]], nodeIds.slice(1)] })}
+            disabled={isolated.length === 0 || isolated.length === nodeIds.length}
+            onClick={() =>
+              onAction({
+                type: 'partition',
+                groups: [isolated, nodeIds.filter((n) => !isolated.includes(n))],
+              })
+            }
           >
-            isolate {nodeIds[0]}
+            split
           </button>
-          <button className={btn} onClick={() => onAction({ type: 'heal' })}>
+          <button
+            className={btn}
+            onClick={() => {
+              onAction({ type: 'heal' });
+              setIsolated([]);
+            }}
+          >
             heal
           </button>
-        </>
+        </div>
       )}
       {caps.includes('delay') && (
         <label className="text-xs font-mono flex items-center gap-1">

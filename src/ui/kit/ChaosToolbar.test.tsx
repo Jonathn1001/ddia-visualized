@@ -32,3 +32,34 @@ test('kill/revive toggle by dead state; actions dispatched', () => {
     { type: 'heal' },
   ]);
 });
+
+test('partition split isolates the checked nodes from the rest', () => {
+  const actions: ControlAction[] = [];
+  render(
+    <ChaosToolbar
+      caps={['partition']}
+      nodeIds={['A', 'B', 'C', 'D', 'E']}
+      deadNodes={[]}
+      onAction={(a) => actions.push(a)}
+    />,
+  );
+  // Reproduces the 5.3 sloppy-loss script's partition: D,E | A,B,C.
+  fireEvent.click(screen.getByLabelText('isolate D'));
+  fireEvent.click(screen.getByLabelText('isolate E'));
+  fireEvent.click(screen.getByText('split'));
+  expect(actions).toEqual([
+    { type: 'partition', groups: [['D', 'E'], ['A', 'B', 'C']] },
+  ]);
+});
+
+test('split is disabled until a proper subset is selected', () => {
+  render(
+    <ChaosToolbar caps={['partition']} nodeIds={['A', 'B']} deadNodes={[]} onAction={() => undefined} />,
+  );
+  const split = screen.getByText('split') as HTMLButtonElement;
+  expect(split.disabled).toBe(true); // nothing selected
+  fireEvent.click(screen.getByLabelText('isolate A'));
+  expect(split.disabled).toBe(false); // proper subset {A}
+  fireEvent.click(screen.getByLabelText('isolate B'));
+  expect(split.disabled).toBe(true); // all nodes selected = no split
+});
