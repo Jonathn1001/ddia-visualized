@@ -1,12 +1,16 @@
 import { describe, expect, test } from 'vitest';
+import { Simulation, type NodeId } from '../engine';
 import { fnv1a } from '../engine/hash';
 import {
   buildRing,
+  hashring,
   keyPos,
   modNMovedCount,
   modNOwner,
   ownerOf,
   ringOwner,
+  type HRPayload,
+  type HRState,
 } from './hashring';
 
 describe('ring math', () => {
@@ -68,5 +72,61 @@ describe('ring math', () => {
       const now = ringOwner(k, to, 4);
       if (now !== ringOwner(k, from, 4)) expect(now).toBe('E');
     }
+  });
+});
+
+const POOL = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+
+function makeSim(seed: number, params: { vnodes?: number; initialMembers?: number } = {}) {
+  return new Simulation<HRState, HRPayload>({
+    module: hashring,
+    config: { nodeIds: POOL, params },
+    seed,
+    network: { latency: [1, 40] },
+  });
+}
+
+export function statesOf(sim: Simulation<HRState, HRPayload>): Map<NodeId, HRState> {
+  return new Map(POOL.map((id) => [id, sim.getState(id)] as const));
+}
+
+describe('put routing', () => {
+  test('init: members = first 3 of sorted pool, empty keys', () => {
+    const sim = makeSim(1);
+    sim.runSteps(POOL.length);
+    const s = sim.getState('A');
+    expect(s.members).toEqual(['A', 'B', 'C']);
+    expect(s.keys).toEqual([]);
+    expect(s.vnodes).toBe(2);
+  });
+
+  test('put stores the key at its ring owner, nowhere else', () => {
+    const sim = makeSim(2);
+    sim.runSteps(POOL.length);
+    sim.external('A', { cmd: 'put', key: 'k1' });
+    sim.runUntil(1000);
+    const owner = ringOwner('k1', ['A', 'B', 'C'], 2);
+    for (const id of POOL) {
+      expect(sim.getState(id).keys.includes('k1')).toBe(id === owner);
+    }
+  });
+
+  test('coordinating from an out-of-ring pool node still routes to a member', () => {
+    const sim = makeSim(3);
+    sim.runSteps(POOL.length);
+    sim.external('H', { cmd: 'put', key: 'k2' }); // H is not a member
+    sim.runUntil(1000);
+    const owner = ringOwner('k2', ['A', 'B', 'C'], 2);
+    expect(sim.getState(owner).keys).toContain('k2');
+  });
+
+  test('duplicate put of the same key stores it once', () => {
+    const sim = makeSim(4);
+    sim.runSteps(POOL.length);
+    sim.external('A', { cmd: 'put', key: 'k3' });
+    sim.external('B', { cmd: 'put', key: 'k3' });
+    sim.runUntil(1000);
+    const total = POOL.reduce((n, id) => n + sim.getState(id).keys.filter((k) => k === 'k3').length, 0);
+    expect(total).toBe(1);
   });
 });
