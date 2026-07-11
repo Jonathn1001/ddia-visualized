@@ -157,7 +157,7 @@ The chaos vocabulary splits into two families: **network chaos** (kill node, par
 
 **Phase 0 — Engine (1–2 weeks).** Event loop, virtual clock, seeded RNG, SimNetwork with delay/drop/partition, timeline recorder (snapshot + replay, §5), **module contract v0 (§5)**. Demo with a 3-node ping-pong. *This is the decisive part — do it well, and every later lab is just a plug-in.*
 
-**Phase 1 — Vertical slice: Chapter 5 Replication (2–3 weeks).** Replication is the first lab because it is the heart of DDIA and exercises the whole engine. Full 3 modes + debrief + 3 chaos challenges. Shipping this slice validates the entire concept.
+**Phase 1 — Vertical slice: Chapter 5 Replication (2–3 weeks).** Replication is the first lab because it is the heart of DDIA and exercises the whole engine. Full 3 modes + debrief + 3 chaos challenges. Shipping this slice validates the entire concept. *(v1.2 note: shipped 2026-07-10 — leader-follower slice first, then the multi-leader and leaderless follow-up labs; Ch5 complete.)*
 
 **Phase 2 — Storage engines: Chapter 3 (2 weeks).** LSM vs B-tree side-by-side with I/O counters. The difference: this lab is about a data structure, not a network — forcing the engine to be general (and validating the storage-chaos family of the module contract).
 

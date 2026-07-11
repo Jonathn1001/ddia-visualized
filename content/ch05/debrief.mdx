@@ -22,3 +22,22 @@ follower), or quorum acks (Ch5's leaderless variant — a later lab iteration).
 
 *replication lag* · *read-after-write consistency* · *monotonic reads* — the lag
 window you exploited is why these read-consistency models exist.
+
+## Multi-leader: conflicts have no right answer
+
+Two leaders both acked your writes, then LWW picked one and **silently deleted
+the other** — the discard record in the lab is the only witness. LWW is what
+Cassandra does by default; the alternative (version vectors + application-level
+merge, Dynamo-style) surfaces the conflict instead of hiding it. Note the lab's
+timestamps are Lamport-bumped (`ts = max(now, seen+1)`) — with real wall clocks
+and skew, LWW gets worse, not better.
+
+## Leaderless: quorum math
+
+With n=3, **w + r > n guarantees read/write overlap** — some replica in your
+read set saw the newest write. w=r=2 tolerates one dead replica for both reads
+and writes. Drop to w+r ≤ n and the lab's stale reads return. **Sloppy quorum**
+keeps accepting writes when home replicas are unreachable by hinting them onto
+fallback nodes — availability bought with durability risk: you proved an acked
+write can vanish when the hint-holders die before handoff. That is exactly the
+Riak/Dynamo trade-off `sloppy_quorum=true` makes.
