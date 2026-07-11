@@ -120,6 +120,11 @@ function handleClient(s: LLState, ev: ModuleEvent<LLPayload>): [LLState, Effect[
     return [{ ...s, nextOp: opId + 1, pending: { ...s.pending, [opId]: op } }, effects];
   }
   const op: PendingRead = { kind: 'read', key: p.key, replies: [], done: false };
+  // NOTE: reads have no op-timeout / failed-read path (unlike writes). Every
+  // scripted lab scenario heals partitions before reading, so w+r>n overlap
+  // guarantees r replies. A read that can never reach r replies stays pending
+  // by design; adding a failed-read variant would expand LLHistory — tracked
+  // as a follow-up, not implemented here.
   const effects: Effect[] = s.home.map((n) => ({
     type: 'send',
     to: n,
@@ -142,17 +147,20 @@ function handleMessage(s: LLState, ev: ModuleEvent<LLPayload>): [LLState, Effect
     case 'storeHint': {
       const hintKey = `${p.target}:${p.key}`;
       const cur = s.hintBuffer[hintKey];
+      const wasEmpty = Object.keys(s.hintBuffer).length === 0;
       const next: LLState =
         cur && cur.ts >= p.ts
           ? s
           : { ...s, hintBuffer: { ...s.hintBuffer, [hintKey]: { key: p.key, value: p.value, ts: p.ts, target: p.target } } };
-      return [
-        next,
-        [
-          { type: 'send', to: from, payload: { msg: 'storeAck', opId: p.opId, key: p.key, ts: p.ts } },
-          { type: 'timer', delay: HANDOFF_RETRY_MS, payload: { timer: 'handoff' } },
-        ],
-      ];
+      // Arm the handoff retry loop only on the empty->non-empty transition —
+      // the handoff timer handler self-reschedules while the buffer is
+      // non-empty, so a hint arriving while the loop is already running
+      // must not spawn a second, independent retry loop.
+      const effects: Effect[] = [{ type: 'send', to: from, payload: { msg: 'storeAck', opId: p.opId, key: p.key, ts: p.ts } }];
+      if (wasEmpty) {
+        effects.push({ type: 'timer', delay: HANDOFF_RETRY_MS, payload: { timer: 'handoff' } });
+      }
+      return [next, effects];
     }
     case 'storeAck': {
       // Handoff confirmation: clear the delivered hint.
