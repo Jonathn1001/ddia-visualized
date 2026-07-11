@@ -194,7 +194,8 @@ export const hashring: SimModule<HRState, HRPayload> = {
 export function latestView(states: Map<NodeId, HRState>): HRState {
   let best: HRState | null = null;
   for (const s of states.values()) if (!best || s.changeSeq > best.changeSeq) best = s;
-  return best!;
+  if (!best) throw new Error('latestView: states must be non-empty');
+  return best;
 }
 
 /** Keys the ring actually moved on the latest membership change. */
