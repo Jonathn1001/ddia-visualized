@@ -3,7 +3,9 @@ import { Simulation, type NodeId } from '../engine';
 import { fnv1a } from '../engine/hash';
 import {
   buildRing,
+  detectHotspot,
   hashring,
+  HOTSPOT_MIN_KEYS,
   keyPos,
   latestView,
   modNMovedCount,
@@ -212,5 +214,70 @@ describe('membership', () => {
       undefined as never,
     );
     expect(next.members).toEqual(s.members);
+  });
+});
+
+describe('hotspot + metrics', () => {
+  test('no hotspot below the minimum key volume', () => {
+    const sim = makeSim(20);
+    sim.runSteps(POOL.length);
+    putKeys(sim, HOTSPOT_MIN_KEYS - 1, 2000);
+    expect(detectHotspot(statesOf(sim))).toBeNull();
+  });
+
+  test('hotspot fires when one member holds ≥ 2× fair share', () => {
+    const sim = makeSim(21);
+    sim.runSteps(POOL.length);
+    // Hand-build the skew: reduce() is pure, so feed a member state directly.
+    const s = sim.getState('A');
+    const skewed: HRState = { ...s, keys: Array.from({ length: 20 }, (_, i) => `s${i}`) };
+    const states = statesOf(sim);
+    states.set('A', skewed);
+    const hit = detectHotspot(states);
+    expect(hit).not.toBeNull();
+    expect(hit!.node).toBe('A');
+    expect(hit!.load).toBe(20);
+    expect(hit!.load).toBeGreaterThanOrEqual(2 * hit!.fairShare);
+  });
+
+  test('metrics report ratio, cumulative moved, member count, V', () => {
+    const sim = makeSim(22);
+    sim.runSteps(POOL.length);
+    putKeys(sim, 24, 2000);
+    sim.external('A', { cmd: 'addNode', node: 'D' });
+    sim.runUntil(4000);
+    const m = Object.fromEntries(hashring.metrics(statesOf(sim), 4000).map((x) => [x.name, x.value]));
+    expect(m['ring-nodes']).toBe(4);
+    expect(m['vnodes']).toBe(2);
+    expect(m['keys-moved']).toBeGreaterThan(0);
+    expect(m['max-load-ratio']).toBeGreaterThanOrEqual(1);
+  });
+
+  test('the documented challenge recipe reaches a hotspot', () => {
+    // Recipe: V=1, grow to the full pool, put 48 keys, then repeatedly remove
+    // the ring-predecessor of the max-load member so it inherits that arc.
+    const sim = makeSim(23, { vnodes: 1 });
+    sim.runSteps(POOL.length);
+    let t = 0;
+    for (const n of ['D', 'E', 'F', 'G', 'H']) {
+      sim.external('A', { cmd: 'addNode', node: n });
+      t += 500;
+      sim.runUntil(t);
+    }
+    for (let i = 0; i < 48; i++) sim.external('A', { cmd: 'put', key: `k${i}` });
+    t += 1500;
+    sim.runUntil(t);
+    for (let round = 0; round < 5 && !detectHotspot(statesOf(sim)); round++) {
+      const view = latestView(statesOf(sim));
+      const ring = buildRing(view.members, 1);
+      const loads = view.members.map((m) => ({ m, load: sim.getState(m).keys.length }));
+      const max = loads.reduce((a, b) => (b.load > a.load ? b : a)).m;
+      const i = ring.findIndex((v) => v.node === max);
+      const victim = ring[(i - 1 + ring.length) % ring.length].node;
+      sim.external('A', { cmd: 'removeNode', node: victim });
+      t += 1000;
+      sim.runUntil(t);
+    }
+    expect(detectHotspot(statesOf(sim))).not.toBeNull();
   });
 });

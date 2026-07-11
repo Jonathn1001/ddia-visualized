@@ -175,8 +175,20 @@ export const hashring: SimModule<HRState, HRPayload> = {
     return [state, []];
   },
 
-  metrics() {
-    return []; // Task 4
+  metrics(states) {
+    const view = latestView(states);
+    const loads = view.members.map((m) => states.get(m)?.keys.length ?? 0);
+    const total = loads.reduce((a, b) => a + b, 0);
+    const fair = view.members.length > 0 ? total / view.members.length : 0;
+    const ratio = fair > 0 ? Math.round((Math.max(...loads) / fair) * 100) / 100 : 0;
+    let moved = 0;
+    for (const s of states.values()) moved += s.moved;
+    return [
+      { name: 'max-load-ratio', value: ratio },
+      { name: 'keys-moved', value: moved },
+      { name: 'ring-nodes', value: view.members.length },
+      { name: 'vnodes', value: view.vnodes },
+    ];
   },
 
   inspect(state) {
@@ -205,4 +217,27 @@ export function movedInLatestChange(states: Map<NodeId, HRState>): number {
   let n = 0;
   for (const s of states.values()) if (s.changeSeq === seq) n += s.movedInChange;
   return n;
+}
+
+/** Minimum stored keys before a hotspot verdict is meaningful (blocks 1-key degenerate wins). */
+export const HOTSPOT_MIN_KEYS = 12;
+
+export interface HotspotResult {
+  node: NodeId;
+  load: number;
+  fairShare: number;
+}
+
+/**
+ * A member holding ≥ 2× its fair share of stored keys. Sound and
+ * quiescence-free — reads current per-node key counts.
+ */
+export function detectHotspot(states: Map<NodeId, HRState>): HotspotResult | null {
+  const view = latestView(states);
+  const loads = view.members.map((m) => ({ node: m, load: states.get(m)?.keys.length ?? 0 }));
+  const total = loads.reduce((n, l) => n + l.load, 0);
+  if (total < HOTSPOT_MIN_KEYS) return null;
+  const fairShare = total / view.members.length;
+  const worst = loads.reduce((a, b) => (b.load > a.load ? b : a));
+  return worst.load >= 2 * fairShare ? { node: worst.node, load: worst.load, fairShare } : null;
 }
