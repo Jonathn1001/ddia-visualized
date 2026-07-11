@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Simulation, type NodeId } from '../../../engine';
 import {
   detectLostAckedWrite,
@@ -24,10 +24,14 @@ export function LeaderlessLab() {
   const [sloppy, setSloppy] = useState(false);
   const [coordinator, setCoordinator] = useState<NodeId>('A');
   const [epoch, setEpoch] = useState(0);
-  const ref = useRef<{ driver: SimDriver<LLState, LLPayload>; key: string } | null>(null);
-  const simKey = `${w}:${r}:${sloppy}:${epoch}`;
-  if (!ref.current || ref.current.key !== simKey) {
-    ref.current?.driver.pause();
+  const [driver, setDriver] = useState<SimDriver<LLState, LLPayload> | null>(null);
+  // Build the sim/driver in an effect (commit phase), never during render: the
+  // SimDriver constructor and the store reset both publish to the shared store,
+  // and mutating it mid-render trips React's "cannot update a component while
+  // rendering a different component" warning on lab navigation. Rebuilds when
+  // w/r/sloppy/epoch change (coordinator only retargets buttons, so it is not a
+  // dep); the cleanup pauses the outgoing driver's rAF loop.
+  useEffect(() => {
     useSimStore.getState().reset();
     const seed = 3000 + epoch;
     const sim = new Simulation<LLState, LLPayload>({
@@ -36,14 +40,12 @@ export function LeaderlessLab() {
       seed,
       network: { latency: [10, 80] },
     });
-    ref.current = {
-      driver: new SimDriver({ sim, seed, publish: (v) => useSimStore.getState().publish(v) }),
-      key: simKey,
-    };
-  }
-  const driver = ref.current.driver;
-  useEffect(() => () => driver.pause(), [driver]);
+    const d = new SimDriver({ sim, seed, publish: (v) => useSimStore.getState().publish(v) });
+    setDriver(d);
+    return () => d.pause();
+  }, [w, r, sloppy, epoch]);
   const view = useSimStore();
+  if (!driver) return null;
 
   const statesOf = () =>
     new Map<NodeId, LLState>(

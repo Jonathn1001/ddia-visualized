@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Simulation, type NodeId } from '../../../engine';
 import {
   detectStaleRead,
@@ -22,10 +22,13 @@ const NODE_IDS = ['L', 'F1', 'F2'];
 export function ReplicationLab() {
   const [mode, setMode] = useState<RepMode>('async');
   const [epoch, setEpoch] = useState(0); // bump to rebuild with a fresh seed
-  const ref = useRef<{ driver: SimDriver<RepState, RepPayload>; key: string } | null>(null);
-  const simKey = `${mode}:${epoch}`;
-  if (!ref.current || ref.current.key !== simKey) {
-    ref.current?.driver.pause();
+  const [driver, setDriver] = useState<SimDriver<RepState, RepPayload> | null>(null);
+  // Build the sim/driver in an effect (commit phase), never during render: the
+  // SimDriver constructor and the store reset both publish to the shared store,
+  // and mutating it mid-render trips React's "cannot update a component while
+  // rendering a different component" warning on lab navigation. Rebuilds when
+  // mode/epoch change; the cleanup pauses the outgoing driver's rAF loop.
+  useEffect(() => {
     useSimStore.getState().reset();
     const seed = 1000 + epoch;
     const sim = new Simulation<RepState, RepPayload>({
@@ -34,14 +37,12 @@ export function ReplicationLab() {
       seed,
       network: { latency: [10, 80] },
     });
-    ref.current = {
-      driver: new SimDriver({ sim, seed, publish: (v) => useSimStore.getState().publish(v) }),
-      key: simKey,
-    };
-  }
-  const driver = ref.current.driver;
-  useEffect(() => () => driver.pause(), [driver]);
+    const d = new SimDriver({ sim, seed, publish: (v) => useSimStore.getState().publish(v) });
+    setDriver(d);
+    return () => d.pause();
+  }, [mode, epoch]);
   const view = useSimStore();
+  if (!driver) return null;
 
   const statesOf = () =>
     new Map<NodeId, RepState>(
