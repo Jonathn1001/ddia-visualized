@@ -129,3 +129,14 @@ test('a read that reaches its quorum records a read, never a failed-read', () =>
   expect(sim.getState('A').history.filter((h) => h.type === 'read')).toHaveLength(1);
   expect(sim.getState('A').history.filter((h) => h.type === 'failed-read')).toHaveLength(0);
 });
+
+test('completed ops are pruned from pending state', () => {
+  const sim = makeSim({ w: 2, r: 2 });
+  sim.runSteps(5);
+  sim.external('A', { cmd: 'write', key: 'x', value: '1' });
+  sim.runUntil(1000);
+  sim.external('A', { cmd: 'read', key: 'x' });
+  sim.runUntil(2000);
+  // The write and the read both completed on coordinator A — neither should linger.
+  expect(Object.keys(sim.getState('A').pending)).toHaveLength(0);
+});
