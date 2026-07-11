@@ -95,6 +95,20 @@ export function ChaosToolbar({
           />
         </label>
       )}
+      {caps.includes('duplicate') && (
+        <label className="text-xs font-mono flex items-center gap-1">
+          duplicate %
+          <input
+            type="range"
+            min={0}
+            max={90}
+            defaultValue={0}
+            onChange={(e) =>
+              onAction({ type: 'net', opts: { duplicateRate: Number(e.target.value) / 100 } })
+            }
+          />
+        </label>
+      )}
     </div>
   );
 }

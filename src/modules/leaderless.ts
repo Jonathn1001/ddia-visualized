@@ -24,13 +24,11 @@ interface PendingWrite {
   ts: number;
   acks: NodeId[];
   hinted: boolean;
-  done: boolean;
 }
 interface PendingRead {
   kind: 'read';
   key: string;
   replies: { from: NodeId; ts: number; value: string | null }[];
-  done: boolean;
 }
 
 export interface LLState {
@@ -62,6 +60,13 @@ export type LLPayload =
 
 const OP_TIMEOUT_MS = 200;
 const HANDOFF_RETRY_MS = 100;
+
+/** Remove a completed op from the pending map so finished ops don't accumulate. */
+function completeOp(pending: LLState['pending'], opId: number): LLState['pending'] {
+  const next = { ...pending };
+  delete next[opId];
+  return next;
+}
 
 function applyLww(s: LLState, key: string, value: string, ts: number): LLState {
   const cur = s.data[key];
@@ -111,7 +116,7 @@ function handleClient(s: LLState, ev: ModuleEvent<LLPayload>): [LLState, Effect[
     // (even one written at t=0) from the no-data sentinel below, and so
     // empty/stale replicas are always detected and read-repaired.
     const ts = ev.time + 1;
-    const op: PendingWrite = { kind: 'write', key: p.key, value: p.value, ts, acks: [], hinted: false, done: false };
+    const op: PendingWrite = { kind: 'write', key: p.key, value: p.value, ts, acks: [], hinted: false };
     const effects: Effect[] = s.home.map((n) => ({
       type: 'send',
       to: n,
@@ -120,7 +125,7 @@ function handleClient(s: LLState, ev: ModuleEvent<LLPayload>): [LLState, Effect[
     effects.push({ type: 'timer', delay: OP_TIMEOUT_MS, payload: { timer: 'op-timeout', opId } });
     return [{ ...s, nextOp: opId + 1, pending: { ...s.pending, [opId]: op } }, effects];
   }
-  const op: PendingRead = { kind: 'read', key: p.key, replies: [], done: false };
+  const op: PendingRead = { kind: 'read', key: p.key, replies: [] };
   // Reads fan `get` to the home replicas and arm an op-timeout: if fewer than r
   // replies are reachable (dead or partitioned replicas), the timeout records a
   // `failed-read` instead of leaving the op pending forever.
@@ -172,7 +177,7 @@ function handleMessage(s: LLState, ev: ModuleEvent<LLPayload>): [LLState, Effect
       }
       if (p.opId === undefined) return [s, []]; // read-repair ack — nothing to track
       const op = s.pending[p.opId];
-      if (!op || op.kind !== 'write' || op.done) return [s, []];
+      if (!op || op.kind !== 'write') return [s, []];
       if (op.acks.includes(from)) return [s, []]; // duplicate
       const acks = [...op.acks, from];
       if (acks.length < s.w) {
@@ -181,7 +186,7 @@ function handleMessage(s: LLState, ev: ModuleEvent<LLPayload>): [LLState, Effect
       return [
         {
           ...s,
-          pending: { ...s.pending, [p.opId]: { ...op, acks, done: true } },
+          pending: completeOp(s.pending, p.opId),
           history: [...s.history, { type: 'ack', key: op.key, ts: op.ts, time: ev.time }],
         },
         [],
@@ -204,7 +209,7 @@ function handleMessage(s: LLState, ev: ModuleEvent<LLPayload>): [LLState, Effect
     }
     case 'getReply': {
       const op = s.pending[p.opId];
-      if (!op || op.kind !== 'read' || op.done) return [s, []];
+      if (!op || op.kind !== 'read') return [s, []];
       if (op.replies.some((x) => x.from === from)) return [s, []];
       const replies = [...op.replies, { from, ts: p.ts, value: p.value }];
       if (replies.length < s.r) {
@@ -213,7 +218,7 @@ function handleMessage(s: LLState, ev: ModuleEvent<LLPayload>): [LLState, Effect
       const newest = replies.reduce((a, b) => (b.ts > a.ts ? b : a));
       let next: LLState = {
         ...s,
-        pending: { ...s.pending, [p.opId]: { ...op, replies, done: true } },
+        pending: completeOp(s.pending, p.opId),
         history: [
           ...s.history,
           { type: 'read', node: s.self, key: op.key, returnedTs: newest.ts, time: ev.time },
@@ -252,14 +257,14 @@ function handleTimer(s: LLState, ev: ModuleEvent<LLPayload>): [LLState, Effect[]
   }
   // op-timeout
   const op = s.pending[p.opId];
-  if (!op || op.done) return [s, []];
+  if (!op) return [s, []];
   if (op.kind === 'read') {
     // The read never gathered r reachable replies — surface it as a failure
     // rather than leaving the op pending forever.
     return [
       {
         ...s,
-        pending: { ...s.pending, [p.opId]: { ...op, done: true } },
+        pending: completeOp(s.pending, p.opId),
         history: [...s.history, { type: 'failed-read', node: s.self, key: op.key, time: ev.time }],
       },
       [],
@@ -269,7 +274,7 @@ function handleTimer(s: LLState, ev: ModuleEvent<LLPayload>): [LLState, Effect[]
     return [
       {
         ...s,
-        pending: { ...s.pending, [p.opId]: { ...op, done: true } },
+        pending: completeOp(s.pending, p.opId),
         history: [...s.history, { type: 'failed-write', key: op.key, time: ev.time }],
       },
       [],
@@ -346,7 +351,7 @@ export const leaderless: SimModule<LLState, LLPayload> = {
       role: state.fallbacks.includes(state.self) ? 'fallback' : 'home',
       data: state.data,
       hints: Object.keys(state.hintBuffer).length,
-      pendingOps: Object.values(state.pending).filter((o) => !o.done).length,
+      pendingOps: Object.keys(state.pending).length,
     } as InspectorTree;
   },
 };
