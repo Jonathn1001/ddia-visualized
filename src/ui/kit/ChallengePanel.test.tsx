@@ -2,16 +2,16 @@
 import { afterEach, beforeEach, expect, test } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { act } from 'react';
-import { Simulation, type NodeId } from '../../../engine';
+import { Simulation, type NodeId } from '../../engine';
 import {
   detectStaleRead,
   replication,
   type RepPayload,
   type RepState,
-} from '../../../modules/replication';
-import { SimDriver } from '../../bridge/SimDriver';
-import { useSimStore } from '../../bridge/simStore';
-import { ChallengePanel } from '../../kit/ChallengePanel';
+} from '../../modules/replication';
+import { SimDriver } from '../bridge/SimDriver';
+import { useSimStore } from '../bridge/simStore';
+import { ChallengePanel } from './ChallengePanel';
 
 afterEach(cleanup);
 
