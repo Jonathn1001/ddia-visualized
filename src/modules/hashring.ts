@@ -84,6 +84,33 @@ function storeKey(s: HRState, key: string): HRState {
   return s.keys.includes(key) ? s : { ...s, keys: [...s.keys, key] };
 }
 
+/**
+ * Apply a new ring view: keep the keys this node still owns, hand off the
+ * rest to their new owners. A removed member owns nothing under the new
+ * ring, so it hands off everything.
+ */
+function applyMembership(s: HRState, members: NodeId[], seq: number): [HRState, Effect[]] {
+  if (seq <= s.changeSeq) return [s, []]; // stale or duplicated broadcast
+  const ring = buildRing(members, s.vnodes);
+  const keep: string[] = [];
+  const outgoing = new Map<NodeId, string[]>();
+  for (const k of s.keys) {
+    const owner = ownerOf(ring, k);
+    if (owner === s.self) keep.push(k);
+    else outgoing.set(owner, [...(outgoing.get(owner) ?? []), k]);
+  }
+  const movedCount = s.keys.length - keep.length;
+  const effects: Effect[] = [...outgoing].map(([to, keys]) => ({
+    type: 'send',
+    to,
+    payload: { msg: 'handoff', keys },
+  }));
+  return [
+    { ...s, members, changeSeq: seq, keys: keep, moved: s.moved + movedCount, movedInChange: movedCount },
+    effects,
+  ];
+}
+
 function handleClient(s: HRState, ev: ModuleEvent<HRPayload>): [HRState, Effect[]] {
   const p = ev.payload as Extract<HRPayload, { cmd: string }>;
   if (p.cmd === 'put') {
@@ -91,7 +118,23 @@ function handleClient(s: HRState, ev: ModuleEvent<HRPayload>): [HRState, Effect[
     if (owner === s.self) return [storeKey(s, p.key), []];
     return [s, [{ type: 'send', to: owner, payload: { msg: 'store', key: p.key } }]];
   }
-  return [s, []]; // addNode/removeNode arrive in Task 3
+  // Membership change — the coordinator computes the new view, applies it
+  // locally, and broadcasts it to every other pool node.
+  const members =
+    p.cmd === 'addNode'
+      ? s.members.includes(p.node) || !s.pool.includes(p.node)
+        ? null
+        : [...s.members, p.node].sort()
+      : !s.members.includes(p.node) || s.members.length <= 1
+        ? null
+        : s.members.filter((m) => m !== p.node);
+  if (!members) return [s, []];
+  const seq = s.changeSeq + 1;
+  const [next, effects] = applyMembership(s, members, seq);
+  const broadcast: Effect[] = s.pool
+    .filter((n) => n !== s.self)
+    .map((to) => ({ type: 'send', to, payload: { msg: 'membership', members, seq } }));
+  return [next, [...effects, ...broadcast]];
 }
 
 function handleMessage(s: HRState, ev: ModuleEvent<HRPayload>): [HRState, Effect[]] {
@@ -102,7 +145,7 @@ function handleMessage(s: HRState, ev: ModuleEvent<HRPayload>): [HRState, Effect
     case 'handoff':
       return [p.keys.reduce(storeKey, s), []];
     case 'membership':
-      return [s, []]; // Task 3
+      return applyMembership(s, p.members, p.seq);
   }
 }
 
@@ -146,3 +189,19 @@ export const hashring: SimModule<HRState, HRPayload> = {
     } satisfies HRInspect as unknown as InspectorTree;
   },
 };
+
+/** The most up-to-date membership view across the pool (max changeSeq). */
+export function latestView(states: Map<NodeId, HRState>): HRState {
+  let best: HRState | null = null;
+  for (const s of states.values()) if (!best || s.changeSeq > best.changeSeq) best = s;
+  return best!;
+}
+
+/** Keys the ring actually moved on the latest membership change. */
+export function movedInLatestChange(states: Map<NodeId, HRState>): number {
+  const seq = latestView(states).changeSeq;
+  if (seq === 0) return 0;
+  let n = 0;
+  for (const s of states.values()) if (s.changeSeq === seq) n += s.movedInChange;
+  return n;
+}

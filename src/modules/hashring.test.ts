@@ -5,8 +5,10 @@ import {
   buildRing,
   hashring,
   keyPos,
+  latestView,
   modNMovedCount,
   modNOwner,
+  movedInLatestChange,
   ownerOf,
   ringOwner,
   type HRPayload,
@@ -128,5 +130,87 @@ describe('put routing', () => {
     sim.runUntil(1000);
     const total = POOL.reduce((n, id) => n + sim.getState(id).keys.filter((k) => k === 'k3').length, 0);
     expect(total).toBe(1);
+  });
+});
+
+/** Every key stored anywhere in the pool, with its holder. */
+function placement(sim: Simulation<HRState, HRPayload>): Map<string, NodeId> {
+  const map = new Map<string, NodeId>();
+  for (const id of POOL) for (const k of sim.getState(id).keys) map.set(k, id);
+  return map;
+}
+
+function putKeys(sim: Simulation<HRState, HRPayload>, n: number, until: number) {
+  for (let i = 0; i < n; i++) sim.external('A', { cmd: 'put', key: `k${i}` });
+  sim.runUntil(until);
+}
+
+describe('membership', () => {
+  test('addNode migrates only keys owned by the new node; counters track the move', () => {
+    const sim = makeSim(10);
+    sim.runSteps(POOL.length);
+    putKeys(sim, 24, 2000);
+    const before = placement(sim);
+    sim.external('A', { cmd: 'addNode', node: 'D' });
+    sim.runUntil(4000);
+    const after = placement(sim);
+    expect(after.size).toBe(24); // conservation
+    let migrated = 0;
+    for (const [k, holder] of after) {
+      if (before.get(k) !== holder) {
+        expect(holder).toBe('D'); // minimal migration
+        migrated++;
+      }
+    }
+    const states = statesOf(sim);
+    expect(latestView(states).members).toEqual(['A', 'B', 'C', 'D']);
+    expect(movedInLatestChange(states)).toBe(migrated);
+    expect(migrated).toBeGreaterThan(0);
+  });
+
+  test('removeNode drains the removed node; its keys land on ring successors', () => {
+    const sim = makeSim(11);
+    sim.runSteps(POOL.length);
+    putKeys(sim, 24, 2000);
+    sim.external('A', { cmd: 'removeNode', node: 'B' });
+    sim.runUntil(4000);
+    expect(sim.getState('B').keys).toEqual([]);
+    const after = placement(sim);
+    expect(after.size).toBe(24);
+    for (const [k, holder] of after) {
+      expect(holder).toBe(ringOwner(k, ['A', 'C'], 2));
+    }
+  });
+
+  test('guards: add existing / add non-pool / remove non-member / remove last are no-ops', () => {
+    const sim = makeSim(12);
+    sim.runSteps(POOL.length);
+    sim.external('A', { cmd: 'addNode', node: 'A' });
+    sim.external('A', { cmd: 'addNode', node: 'Z' });
+    sim.external('A', { cmd: 'removeNode', node: 'H' });
+    sim.runUntil(1000);
+    expect(latestView(statesOf(sim)).members).toEqual(['A', 'B', 'C']);
+    sim.external('A', { cmd: 'removeNode', node: 'B' });
+    sim.external('A', { cmd: 'removeNode', node: 'C' });
+    sim.runUntil(2000);
+    expect(latestView(statesOf(sim)).members).toEqual(['A']);
+    sim.external('A', { cmd: 'removeNode', node: 'A' }); // last member — refused
+    sim.runUntil(3000);
+    expect(latestView(statesOf(sim)).members).toEqual(['A']);
+  });
+
+  test('stale membership broadcast (duplicate chaos) is ignored', () => {
+    const sim = makeSim(13);
+    sim.runSteps(POOL.length);
+    sim.external('A', { cmd: 'addNode', node: 'D' });
+    sim.runUntil(2000);
+    const s = sim.getState('B');
+    const [next] = hashring.reduce(
+      s,
+      { kind: 'message', self: 'B', from: 'A', time: 2001, payload: { msg: 'membership', members: ['A', 'B', 'C'], seq: s.changeSeq } },
+      // rng unused by this module
+      undefined as never,
+    );
+    expect(next.members).toEqual(s.members);
   });
 });
