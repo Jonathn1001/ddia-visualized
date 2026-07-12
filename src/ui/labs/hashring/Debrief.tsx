@@ -1,12 +1,12 @@
-import DebriefContent from '../../../../content/ch05/debrief.mdx';
+import DebriefContent from '../../../../content/ch06/debrief.mdx';
 import { DebriefArticle } from '../../kit/DebriefArticle';
 import { SurpriseJournal } from '../../kit/SurpriseJournal';
 
-export function Debrief() {
+export function HashRingDebrief() {
   return (
     <DebriefArticle>
       <DebriefContent />
-      <SurpriseJournal />
+      <SurpriseJournal storageKey="ddia:ch06:journal" />
     </DebriefArticle>
   );
 }

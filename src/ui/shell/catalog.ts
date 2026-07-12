@@ -65,7 +65,10 @@ export const CATALOG: Chapter[] = [
   {
     id: 'ch6',
     title: 'Ch.6 — Partitioning',
-    labs: [{ id: '6.1', label: 'Consistent Hashing Ring', status: 'soon' }],
+    labs: [
+      { id: '6.1', label: 'Consistent Hashing Ring', status: 'active' },
+      { id: '6.d', label: 'Debrief & Journal', status: 'active' },
+    ],
   },
   {
     id: 'ch7',
