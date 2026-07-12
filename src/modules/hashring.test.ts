@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'vitest';
 import { Simulation, type NodeId } from '../engine';
-import { fnv1a } from '../engine/hash';
 import {
   buildRing,
   detectHotspot,
@@ -58,9 +57,9 @@ describe('ring math', () => {
     }
   });
 
-  test('modNOwner: sorted-members index by fnv1a(key) % N', () => {
+  test('modNOwner: sorted-members index by keyPos(key) % N', () => {
     const members = ['A', 'B', 'C'];
-    expect(modNOwner('k1', members)).toBe(members[fnv1a('k1') % 3]);
+    expect(modNOwner('k1', members)).toBe(members[keyPos('k1') % 3]);
   });
 
   test('consistent hashing moves fewer keys than mod-N on a membership change', () => {
@@ -76,6 +75,26 @@ describe('ring math', () => {
       const now = ringOwner(k, to, 4);
       if (now !== ringOwner(k, from, 4)) expect(now).toBe('E');
     }
+  });
+
+  test('default lab scenario: ring moves far fewer keys than mod-N (pins the avalanche finalizer)', () => {
+    // The lab's opening move: 24 sequential keys, ABC -> ABCD at V=2. With raw
+    // fnv1a (no mix32) this inverts to ring 20 vs mod-N 18 — the finalizer is
+    // what makes the lesson true for the keys a learner actually creates.
+    const keys = Array.from({ length: 24 }, (_, i) => `k${i}`);
+    const from = ['A', 'B', 'C'];
+    const to = ['A', 'B', 'C', 'D'];
+    const ringMoved = keys.filter((k) => ringOwner(k, from, 2) !== ringOwner(k, to, 2)).length;
+    const modMoved = modNMovedCount(keys, from, to);
+    expect(ringMoved).toBeLessThan(modMoved / 2);
+  });
+
+  test('sequential key positions disperse across the ring (pins mix32 diffusion)', () => {
+    // Raw fnv1a puts k0..k19 in a ~7%-wide band; mixed positions span most of
+    // the circle. Guard the spread so weak diffusion cannot silently return.
+    const positions = Array.from({ length: 20 }, (_, i) => keyPos(`k${i}`));
+    const span = (Math.max(...positions) - Math.min(...positions)) / 0x100000000;
+    expect(span).toBeGreaterThan(0.5);
   });
 });
 
