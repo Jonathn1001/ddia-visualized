@@ -67,13 +67,20 @@ export function HashRingLab() {
   );
   const coordinator = members[0];
   const addable = NODE_IDS.filter((n) => !members.includes(n));
+  // Clamp the picks to the live lists: after a successful add/remove the stored
+  // pick leaves its list, and acting on the stale value would feed a corrupted
+  // membership (duplicate id in `to`) into modNMovedCount.
+  const addSel = addable.includes(addPick) ? addPick : addable[0];
+  const removeSel = members.includes(removePick) ? removePick : members[0];
   const allKeys = placements.map((p) => p.key);
   const actualMoved = lastChange ? movedInLatestChange(statesOf()) : 0;
   const modNMoved = lastChange ? modNMovedCount(allKeys, lastChange.from, lastChange.to) : 0;
 
-  const change = (cmd: 'addNode' | 'removeNode', node: NodeId) => {
-    const to =
-      cmd === 'addNode' ? [...members, node].sort() : members.filter((m) => m !== node);
+  const change = (cmd: 'addNode' | 'removeNode', node: NodeId | undefined) => {
+    if (!node) return;
+    if (cmd === 'addNode' && members.includes(node)) return;
+    if (cmd === 'removeNode' && !members.includes(node)) return;
+    const to = cmd === 'addNode' ? [...members, node].sort() : members.filter((m) => m !== node);
     setLastChange({ from: members, to });
     driver.external(coordinator, { cmd, node });
   };
@@ -129,15 +136,15 @@ export function HashRingLab() {
         >
           put {putCount} keys
         </button>
-        <select className={inputBox} value={addPick} onChange={(e) => setAddPick(e.target.value)}>
+        <select className={inputBox} value={addSel} onChange={(e) => setAddPick(e.target.value)}>
           {addable.map((id) => (
             <option key={id}>{id}</option>
           ))}
         </select>
-        <button className={btn} disabled={addable.length === 0} onClick={() => change('addNode', addPick)}>
+        <button className={btn} disabled={addable.length === 0} onClick={() => change('addNode', addSel)}>
           add node
         </button>
-        <select className={inputBox} value={removePick} onChange={(e) => setRemovePick(e.target.value)}>
+        <select className={inputBox} value={removeSel} onChange={(e) => setRemovePick(e.target.value)}>
           {members.map((id) => (
             <option key={id}>{id}</option>
           ))}
@@ -145,7 +152,7 @@ export function HashRingLab() {
         <button
           className={btn}
           disabled={members.length <= 1}
-          onClick={() => change('removeNode', removePick)}
+          onClick={() => change('removeNode', removeSel)}
         >
           remove node
         </button>
