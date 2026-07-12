@@ -1,0 +1,37 @@
+# Chapter 6 — Partitioning: Debrief
+
+## The property you just watched
+
+When you added a node, only the keys inside its new arcs moved — the readout showed
+consistent hashing re-homing a handful of keys while **hash mod N would have reshuffled
+almost all of them**. That is the whole trick: node and key positions come from the same
+hash circle, so membership changes are local edits, not global reshuffles.
+
+## Virtual nodes
+
+At low vnodes you made a hotspot: one node owned a huge arc and hit ≥2× its fair
+share. Raising vnodes splits each node into many small arcs scattered around the
+circle — the law of large numbers evens the load. Real systems ship this dial:
+
+- **Cassandra / ScyllaDB**: `num_tokens` (256 vnodes per node by default in older Cassandra).
+- **Riak**: fixed ring of 64/128/256 partitions claimed by nodes.
+- **Amazon Dynamo**: the paper's "strategy 3" — Q equal-sized partitions, T per node.
+
+## What hashing cannot fix
+
+A **celebrity hot key** — one key receiving most of the traffic — lands on exactly one
+owner no matter how you hash. The ring balances *key count*, not *key popularity*.
+Real fixes live above the partitioner: request caching, key salting (append a random
+suffix and fan reads back in), or splitting the hot key's value.
+
+## The crash contrast
+
+`kill node` here strands keys — this lab keeps **one copy per key**, so a dead owner
+means unreachable data. That is why membership changes in this lab are *planned*
+add/remove operations, and why Ch5's replication exists: partitioning decides *where*
+data lives, replication decides *how many places*.
+
+## Terms
+
+*consistent hashing* · *virtual nodes (vnodes)* · *rebalancing* · *hot spot / skew* —
+the partitioning vocabulary of DDIA Ch6.
