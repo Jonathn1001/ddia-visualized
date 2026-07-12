@@ -1,5 +1,5 @@
-import { fnv1a, type NodeId } from '../../engine';
-import { buildRing, HOTSPOT_MIN_KEYS } from '../../modules/hashring';
+import type { NodeId } from '../../engine';
+import { buildRing, HOTSPOT_MIN_KEYS, keyPos } from '../../modules/hashring';
 
 /** Stable per-node hues, indexed by pool position (same precedent as MetricsPanel's palette). */
 const NODE_COLORS = ['#0ea5e9', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
@@ -23,7 +23,7 @@ function xy(angle: number, radius: number): { x: number; y: number } {
 
 /**
  * The consistent-hash ring (DESIGN_PLAN Ch6): vnode ticks and key dots at
- * their fnv1a angles, colored by owning node, plus per-member load bars.
+ * their keyPos angles, colored by owning node, plus per-member load bars.
  * Migration renders as recolor — a dot's position never changes, only its fill.
  */
 export function RingView({
@@ -67,7 +67,7 @@ export function RingView({
           );
         })}
         {placements.map((p) => {
-          const q = xy(angleOf(fnv1a(p.key)), R - 16);
+          const q = xy(angleOf(keyPos(p.key)), R - 16);
           return <circle key={p.key} data-key={p.key} cx={q.x} cy={q.y} r={3.5} fill={colorOf(p.owner)} />;
         })}
       </svg>

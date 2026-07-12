@@ -25,10 +25,10 @@ describe('ring math', () => {
     expect(ring.filter((v) => v.node === 'A')).toHaveLength(4);
   });
 
-  test('vnode positions derive from fnv1a of `${node}#${i}`', () => {
+  test('vnode positions derive from keyPos of `${node}#${i}`', () => {
     const ring = buildRing(['A'], 2);
     expect(ring.map((v) => v.pos).sort((a, b) => a - b)).toEqual(
-      [fnv1a('A#0'), fnv1a('A#1')].sort((a, b) => a - b),
+      [keyPos('A#0'), keyPos('A#1')].sort((a, b) => a - b),
     );
   });
 

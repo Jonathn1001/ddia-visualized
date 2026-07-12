@@ -4,24 +4,40 @@ import type { Effect, InspectorTree, ModuleEvent, SimModule } from '../engine/mo
 
 /**
  * Consistent-hash ring with virtual nodes (DDIA Ch6). Positions come from the
- * engine's fnv1a — pure and deterministic; no RNG, no wall clock.
+ * engine's fnv1a, passed through an avalanche finalizer — pure and
+ * deterministic; no RNG, no wall clock.
  */
 export interface RingVnode {
   pos: number;
   node: NodeId;
 }
 
+/**
+ * murmur3's fmix32 avalanche finalizer. fnv1a alone has weak diffusion on
+ * short sequential strings ("k0".."k23" land in a 7%-wide band of the ring),
+ * which inverts the lab's minimal-migration story; the finalizer spreads
+ * positions uniformly while staying pure and deterministic.
+ */
+function mix32(h: number): number {
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b) >>> 0;
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35) >>> 0;
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+
 /** All vnode positions for a membership, sorted clockwise. Ties break by node id. */
 export function buildRing(members: NodeId[], vnodes: number): RingVnode[] {
   const ring: RingVnode[] = [];
   for (const node of members)
-    for (let i = 0; i < vnodes; i++) ring.push({ pos: fnv1a(`${node}#${i}`), node });
+    for (let i = 0; i < vnodes; i++) ring.push({ pos: keyPos(`${node}#${i}`), node });
   ring.sort((a, b) => a.pos - b.pos || (a.node < b.node ? -1 : 1));
   return ring;
 }
 
 export function keyPos(key: string): number {
-  return fnv1a(key);
+  return mix32(fnv1a(key));
 }
 
 /** Owner = first vnode clockwise from the key's position, wrapping at 2^32. Ring must be non-empty. */
