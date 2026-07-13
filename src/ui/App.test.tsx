@@ -27,6 +27,22 @@ test('hash ring lab renders from the sidebar', () => {
   expect(screen.getByText('add node')).toBeTruthy();
 });
 
+test('rest api flow renders from the sidebar', () => {
+  render(<App />);
+  fireEvent.click(screen.getByText('REST API'));
+  expect(screen.getByText('REST: Resources, One at a Time', { selector: 'h1' })).toBeTruthy();
+  expect(screen.getByText('load profile')).toBeTruthy();
+  expect(screen.getByText('Chaos Challenge — Partial page')).toBeTruthy();
+});
+
+test('grpc flow exposes the schema-version toggle', () => {
+  render(<App />);
+  fireEvent.click(screen.getByText('gRPC'));
+  expect(screen.getByText('gRPC: Binary, Built to Evolve', { selector: 'h1' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'v2 (+field)' })).toBeTruthy();
+  expect(screen.getByText('Chaos Challenge — Evolve the schema')).toBeTruthy();
+});
+
 test('kafka broker flow renders from the sidebar', () => {
   render(<App />);
   fireEvent.click(screen.getByText('Kafka Log'));

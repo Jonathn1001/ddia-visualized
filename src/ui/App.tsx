@@ -12,6 +12,8 @@ import { HashRingLab } from './labs/hashring/HashRingLab';
 import { HashRingDebrief } from './labs/hashring/Debrief';
 import { BrokersLab } from './labs/brokers/BrokersLab';
 import { BrokersDebrief } from './labs/brokers/Debrief';
+import { ApiLab } from './labs/api/ApiLab';
+import { ApiDebrief } from './labs/api/Debrief';
 
 interface Page {
   eyebrow: string;
@@ -97,6 +99,34 @@ const PAGES: Record<string, Omit<Page, 'body'> & { Component: () => ReactNode }>
     thesis:
       'Why the same workload duplicated, redelivered, and vanished across three brokers — and why exactly-once is something you build on top, never something the broker hands you.',
     Component: BrokersDebrief,
+  },
+  '4.1': {
+    eyebrow: 'Chapter 4 — Encoding & Evolution',
+    title: 'REST: Resources, One at a Time',
+    thesis:
+      'To render a profile the client fetches the user, learns its post ids, then fetches each post separately — the N+1 problem: 1 + N round trips and a verbose JSON envelope per resource. The upside is graceful degradation: drop one request and the page still renders without that post. Crank the drop rate and make a partial page.',
+    Component: () => <ApiLab mode="rest" />,
+  },
+  '4.2': {
+    eyebrow: 'Chapter 4 — Encoding & Evolution',
+    title: 'GraphQL: One Query, Exact Shape',
+    thesis:
+      'One query describes the whole graph; the server returns one exact-shape document in a single round trip — no over-fetch, no under-fetch. But the N+1 only moved server-side into the resolvers, and one request is one failure point: drop it and the whole page is gone. Make it fail all-or-nothing.',
+    Component: () => <ApiLab mode="graphql" />,
+  },
+  '4.3': {
+    eyebrow: 'Chapter 4 — Encoding & Evolution',
+    title: 'gRPC: Binary, Built to Evolve',
+    thesis:
+      'One RPC returns a compact binary protobuf message — far fewer bytes than JSON. Fields are identified by number, not name, so a v2 server that adds a field is decoded fine by a v1 client, which skips the tag it does not recognize. Bump the schema and watch the old client keep working.',
+    Component: () => <ApiLab mode="grpc" />,
+  },
+  '4.d': {
+    eyebrow: 'Chapter 4 — Debrief',
+    title: 'No free lunch in API styles',
+    thesis:
+      'Round trips, payload size, failure granularity, evolvability — the four dials REST, GraphQL, and gRPC each set differently, and why the right choice is the trade that fits your clients and your network.',
+    Component: ApiDebrief,
   },
 };
 

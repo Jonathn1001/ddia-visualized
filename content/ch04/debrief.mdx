@@ -1,0 +1,47 @@
+# Chapter 4 — Dataflow & API Styles: Debrief
+
+## One profile, three shapes
+
+Every flow loaded the same thing — a user and their posts. What changed was the
+*shape of the request*, and out of that shape fell the cost: round trips, bytes on
+the wire, and what happens when something drops.
+
+## REST — resources, one at a time
+
+You fetched the user, learned its post ids, then fetched each post separately:
+**1 + N round trips**. Over real latency that multiplies — the **N+1 problem**. Each
+request also ships a verbose JSON envelope, so the bytes add up. The upside you
+found: when one post request is lost, the page renders **without that post** —
+partial results, graceful degradation. REST fails one resource at a time.
+
+## GraphQL — one query, exact shape
+
+You sent **one query** describing the whole graph; the server returned **one
+document** with exactly the fields you asked for — no over-fetch, no under-fetch,
+one client round trip. But the N+1 did not vanish — it moved **server-side** into
+the resolvers (you watched the resolver-call count climb). And a single request is
+a single failure point: drop it and the **whole page** is gone. Fast, precise, and
+all-or-nothing.
+
+## gRPC — binary, and built to evolve
+
+You sent **one RPC** and got back a compact **binary** message — far fewer bytes
+than JSON for the same data. The deeper lesson is evolution: protobuf identifies
+fields by **number**, not name. When you bumped the server to v2 and it added a
+field, the v1 client simply **skipped the tag it didn't recognize** and kept
+working — backward compatibility for free. (Removing or renumbering a required
+field is the breaking change to avoid.)
+
+## The one idea
+
+> The API style is a trade among **round trips, payload size, failure granularity,
+> and evolvability**. REST spends round trips to gain partial resilience; GraphQL
+> spends a single fragile round trip to gain an exact shape; gRPC spends a rigid
+> schema to gain compactness and safe evolution. There is no free lunch — only the
+> trade that fits your clients and your network.
+
+## Terms
+
+*request/response dataflow* · *N+1 problem* · *over-/under-fetching* · *resolver* ·
+*binary encoding (protobuf)* · *forward/backward compatibility* · *field tags* —
+the encoding-and-dataflow vocabulary of DDIA Ch4.
