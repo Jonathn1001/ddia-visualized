@@ -27,14 +27,18 @@ test('hash ring lab renders from the sidebar', () => {
   expect(screen.getByText('add node')).toBeTruthy();
 });
 
-test('broker lab renders from the sidebar with mode tabs and scoreboard', () => {
+test('kafka broker flow renders from the sidebar', () => {
   render(<App />);
-  fireEvent.click(screen.getByText('Broker Semantics'));
-  expect(screen.getByText(/Broker Semantics/, { selector: 'h1' })).toBeTruthy();
+  fireEvent.click(screen.getByText('Kafka Log'));
+  expect(screen.getByText('Kafka: Replayable Log', { selector: 'h1' })).toBeTruthy();
   expect(screen.getByText('produce 12')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'RabbitMQ' })).toBeTruthy();
-  // switching tabs updates the active challenge
-  fireEvent.click(screen.getByRole('button', { name: 'Redis' }));
+  expect(screen.getByText('Chaos Challenge — Make it twice')).toBeTruthy();
+});
+
+test('redis broker flow renders its own challenge from the sidebar', () => {
+  render(<App />);
+  fireEvent.click(screen.getByText('Redis Pub/Sub'));
+  expect(screen.getByText('Redis: Pub/Sub Fan-Out', { selector: 'h1' })).toBeTruthy();
   expect(screen.getByText('Chaos Challenge — Lose it forever')).toBeTruthy();
 });
 

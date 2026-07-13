@@ -72,10 +72,24 @@ const PAGES: Record<string, Omit<Page, 'body'> & { Component: () => ReactNode }>
   },
   '11.1': {
     eyebrow: 'Chapter 11 — Stream Processing',
-    title: 'Broker Semantics: Kafka vs RabbitMQ vs Redis',
+    title: 'Kafka: Replayable Log',
     thesis:
-      'The same 12 messages into three brokers — a Kafka-style partitioned log, a RabbitMQ-style destructive queue, and Redis pub/sub fan-out. Same topology, three fates. Kill a consumer and watch the delivery guarantee fall out of what the broker stores and what the consumer acknowledges: replay-and-duplicate, requeue-and-redeliver, or lose-it-forever.',
-    Component: BrokersLab,
+      'A partitioned append-only log. Consumers commit offsets periodically, so there is always a window of processed-but-uncommitted work. Kill a consumer inside it and the partition is reassigned and replayed from the last commit — the survivor reprocesses what the dead one already handled. Nothing is lost; some things happen twice. Make it twice.',
+    Component: () => <BrokersLab mode="kafka" />,
+  },
+  '11.2': {
+    eyebrow: 'Chapter 11 — Stream Processing',
+    title: 'RabbitMQ: Destructive Queue',
+    thesis:
+      'A queue that deletes a message the instant it is acked — the anti-log. If the ack never comes, the ack timeout requeues the message and redelivers it to another consumer, flagged as a redelivery. Kill the holder of an unacked message and resurrect it on the survivor. Nothing is lost; a duplicate appears only if the ack was.',
+    Component: () => <BrokersLab mode="rabbit" />,
+  },
+  '11.3': {
+    eyebrow: 'Chapter 11 — Stream Processing',
+    title: 'Redis: Pub/Sub Fan-Out',
+    thesis:
+      'The broker stores nothing. It fans each message out to every live subscriber and forgets it. A subscriber that is down misses the message forever; reviving it catches only future publishes. Kill a subscriber across a burst and lose those messages for good — at-most-once is a storage decision, not a delivery bug.',
+    Component: () => <BrokersLab mode="redis" />,
   },
   '11.d': {
     eyebrow: 'Chapter 11 — Debrief',

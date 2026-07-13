@@ -94,7 +94,9 @@ export const CATALOG: Chapter[] = [
     id: 'ch11',
     title: 'Ch.11 — Stream Processing',
     labs: [
-      { id: '11.1', label: 'Broker Semantics', status: 'active' },
+      { id: '11.1', label: 'Kafka Log', status: 'active' },
+      { id: '11.2', label: 'RabbitMQ Queue', status: 'active' },
+      { id: '11.3', label: 'Redis Pub/Sub', status: 'active' },
       { id: '11.d', label: 'Debrief & Journal', status: 'active' },
     ],
   },

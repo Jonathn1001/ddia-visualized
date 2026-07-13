@@ -44,7 +44,7 @@ export function BrokerInternals({
   return (
     <div className="min-w-[280px] space-y-2 rounded border border-line bg-panel p-3">
       <p className="font-mono text-[11px] tracking-wider text-dim uppercase">broker · {mode}</p>
-      {mode === 'kafka' && <KafkaInternals broker={broker as unknown as KafkaBrokerView} />}
+      {mode === 'kafka' && <KafkaInternals broker={broker as unknown as KafkaBrokerView} consumers={consumers} />}
       {mode === 'rabbit' && <RabbitInternals broker={broker as unknown as RabbitBrokerView} />}
       {mode === 'redis' && <RedisInternals broker={broker as unknown as RedisBrokerView} consumers={consumers} />}
     </div>
@@ -82,11 +82,18 @@ function KafkaLane({ p, broker }: { p: 'p0' | 'p1'; broker: KafkaBrokerView }) {
   );
 }
 
-function KafkaInternals({ broker }: { broker: KafkaBrokerView }) {
+function KafkaInternals({ broker, consumers }: { broker: KafkaBrokerView; consumers: ConsumerView[] }) {
   return (
     <div className="space-y-2">
       <KafkaLane p="p0" broker={broker} />
       <KafkaLane p="p1" broker={broker} />
+      <p className="font-mono text-[10px] text-dim">
+        {consumers.map((c) => (
+          <span key={c.id} data-consumer={c.id} className="mr-3">
+            <span className={c.dead ? 'text-sign' : 'text-set'}>{c.id}</span> processed {c.processed.length}
+          </span>
+        ))}
+      </p>
       <p className="font-mono text-[10px] text-dim">amber = delivered but uncommitted (the crash window)</p>
     </div>
   );
