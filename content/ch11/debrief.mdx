@@ -1,0 +1,53 @@
+# Chapter 11 — Stream Processing: Debrief
+
+## Same workload, three fates
+
+You produced the same 12 messages into three brokers and watched the scoreboard
+diverge. Nothing about the *messages* changed — the delivery guarantee fell out of
+two decisions each broker makes:
+
+- **What does the broker store?** A durable log (Kafka), a message held only until
+  acked (RabbitMQ), or nothing at all (Redis pub/sub).
+- **What does the consumer acknowledge?** A periodic offset commit (Kafka), a
+  per-message ack (RabbitMQ), or nothing (Redis).
+
+## Kafka — replayable log, at-least-once
+
+The broker appends every message to a partition log and never deletes it. Consumers
+commit an *offset* every few messages, so there is always a window of
+processed-but-uncommitted work. Kill a consumer in that window and the partition is
+reassigned and **replayed from the last commit** — the survivor reprocesses messages
+the dead consumer already handled. That is the duplicate you made: `dup > 0, lost = 0`.
+Exactly-once is not free here — it is idempotence or transactional offsets layered on
+top of an at-least-once log.
+
+## RabbitMQ — destructive queue, at-least-once
+
+The broker deletes a message the instant it is acked — a destructive read, the
+anti-log. If the ack never comes (consumer died, timeout fired), the message is
+**requeued and redelivered** to another consumer, flagged `redelivered`. You resurrected
+a message this way: `lost = 0`, and a duplicate appears only if the original consumer
+processed it before its ack was lost. A message that fails too many times is
+**dead-lettered** — parked, not lost. Per-message acks are finer-grained than Kafka's
+per-offset commits, but the ceiling is the same: at-least-once.
+
+## Redis pub/sub — fan-out, at-most-once
+
+The broker stores **nothing**. It fans each message out to every live subscriber and
+forgets it. A subscriber that is down misses the message forever; reviving it catches
+only *future* publishes. That is the loss you produced: `dup = 0, lost > 0`. At-most-once
+is not a bug — it is the direct consequence of a broker that keeps no log. (Redis
+*Streams* add a log and change this story; pub/sub does not.)
+
+## The one idea
+
+> Delivery guarantees are a **storage** decision, not a delivery-mechanism trick.
+> A log gives you replay (and duplicates); a destructive queue gives you redelivery;
+> keeping nothing gives you loss. Pick the guarantee, and you have picked what the
+> broker must store.
+
+## Terms
+
+*at-least-once* · *at-most-once* · *exactly-once* · *offset commit* · *consumer group* ·
+*rebalance / partition reassignment* · *ack / redelivery* · *dead-letter* · *pub/sub
+fan-out* — the stream-processing delivery vocabulary of DDIA Ch11.

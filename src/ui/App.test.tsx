@@ -26,3 +26,21 @@ test('hash ring lab renders from the sidebar', () => {
   expect(screen.getByText('Consistent Hashing Ring', { selector: 'h1' })).toBeTruthy();
   expect(screen.getByText('add node')).toBeTruthy();
 });
+
+test('broker lab renders from the sidebar with mode tabs and scoreboard', () => {
+  render(<App />);
+  fireEvent.click(screen.getByText('Broker Semantics'));
+  expect(screen.getByText(/Broker Semantics/, { selector: 'h1' })).toBeTruthy();
+  expect(screen.getByText('produce 12')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'RabbitMQ' })).toBeTruthy();
+  // switching tabs updates the active challenge
+  fireEvent.click(screen.getByRole('button', { name: 'Redis' }));
+  expect(screen.getByText('Chaos Challenge — Lose it forever')).toBeTruthy();
+});
+
+test('broker debrief renders from the sidebar', () => {
+  render(<App />);
+  const debriefs = screen.getAllByText('Debrief & Journal');
+  fireEvent.click(debriefs[debriefs.length - 1]); // ch11 debrief is the last in book order
+  expect(screen.getByText('Storage decides delivery', { selector: 'h1' })).toBeTruthy();
+});

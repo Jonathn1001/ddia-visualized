@@ -10,6 +10,8 @@ import { MultiLeaderLab } from './labs/multileader/MultiLeaderLab';
 import { LeaderlessLab } from './labs/leaderless/LeaderlessLab';
 import { HashRingLab } from './labs/hashring/HashRingLab';
 import { HashRingDebrief } from './labs/hashring/Debrief';
+import { BrokersLab } from './labs/brokers/BrokersLab';
+import { BrokersDebrief } from './labs/brokers/Debrief';
 
 interface Page {
   eyebrow: string;
@@ -67,6 +69,20 @@ const PAGES: Record<string, Omit<Page, 'body'> & { Component: () => ReactNode }>
     thesis:
       'The minimal-migration property you just used, the vnode dial real systems ship, and the hot key no partitioner can fix.',
     Component: HashRingDebrief,
+  },
+  '11.1': {
+    eyebrow: 'Chapter 11 — Stream Processing',
+    title: 'Broker Semantics: Kafka vs RabbitMQ vs Redis',
+    thesis:
+      'The same 12 messages into three brokers — a Kafka-style partitioned log, a RabbitMQ-style destructive queue, and Redis pub/sub fan-out. Same topology, three fates. Kill a consumer and watch the delivery guarantee fall out of what the broker stores and what the consumer acknowledges: replay-and-duplicate, requeue-and-redeliver, or lose-it-forever.',
+    Component: BrokersLab,
+  },
+  '11.d': {
+    eyebrow: 'Chapter 11 — Debrief',
+    title: 'Storage decides delivery',
+    thesis:
+      'Why the same workload duplicated, redelivered, and vanished across three brokers — and why exactly-once is something you build on top, never something the broker hands you.',
+    Component: BrokersDebrief,
   },
 };
 
