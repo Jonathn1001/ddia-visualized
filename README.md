@@ -10,18 +10,32 @@ Design: [`docs/DESIGN_PLAN.en.md`](docs/DESIGN_PLAN.en.md) (canonical; Vietnames
 
 ## Status
 
-**Chapter 5 (Replication) complete — three labs live.**
+**Four chapters live — eleven interactive labs.**
 
-- **5.1 Replication Theater** — leader/followers with an async/sync ack toggle. Challenge: *produce a stale read*.
-- **5.2 Multi-Leader Conflicts** — two datacenters accepting writes, last-write-wins resolution. Challenge: *make an acknowledged write silently disappear*.
-- **5.3 Leaderless Quorum** — Dynamo-style `w`/`r` quorums, read-repair, sloppy quorum + hinted handoff. Challenge: *sloppy quorum loses an acked write*.
+**Ch.4 — Encoding & Dataflow** (three standalone API-style flows; same profile load, three shapes):
+- **4.1 REST** — resource-oriented: 1 + N round trips, verbose JSON. Challenge: *drop a request → a partial page, not total failure*.
+- **4.2 GraphQL** — one query, exact shape, hidden server-side N+1. Challenge: *drop the one query → the whole page fails (all-or-nothing)*.
+- **4.3 gRPC** — compact binary, field-number schema evolution. Challenge: *bump the server to v2 (adds a field) → the v1 client still decodes*.
+
+**Ch.5 — Replication:**
+- **5.1 Replication Theater** — leader/followers, async/sync ack toggle. Challenge: *produce a stale read*.
+- **5.2 Multi-Leader Conflicts** — two datacenters, last-write-wins. Challenge: *make an acknowledged write silently disappear*.
+- **5.3 Leaderless Quorum** — Dynamo `w`/`r`, read-repair, sloppy quorum + hinted handoff. Challenge: *sloppy quorum loses an acked write*.
+
+**Ch.6 — Partitioning:**
+- **6.1 Consistent Hashing Ring** — virtual nodes, minimal migration. Challenge: *create a hotspot*.
+
+**Ch.11 — Stream Processing** (three standalone broker flows; same workload, three delivery fates):
+- **11.1 Kafka Log** — replayable log, offset commits, session-timeout replay. Challenge: *make the group process a message twice*.
+- **11.2 RabbitMQ Queue** — destructive queue, per-message acks, ack-timeout redelivery + dead-letter. Challenge: *resurrect a message on the survivor*.
+- **11.3 Redis Pub/Sub** — fan-out, fire-and-forget, no storage. Challenge: *lose a message forever*.
+
+Each chapter ends in a **Debrief & Journal** page.
 
 Phase 0 — deterministic simulation engine (`src/engine/`): discrete-event loop
 with a virtual clock, seeded RNG, chaos-capable SimNetwork, snapshot/replay
 scrubbing, and the `SimModule` plug-in contract (v0.2). A token ring with
-retransmission (`src/modules/pingpong.ts`) is still browsable in the **pingpong** tab.
-
-Next up: **Chapter 6 — Consistent Hashing Ring** (design in [`docs/superpowers/specs/2026-07-11-ch6-consistent-hashing-design.md`](docs/superpowers/specs/2026-07-11-ch6-consistent-hashing-design.md)).
+retransmission (`src/modules/pingpong.ts`) is still browsable in the **0.1** tab.
 
 ## Using the labs
 
@@ -55,9 +69,12 @@ Same seed + same actions → identical run (verified by an event-log hash). All 
 
 ```
 src/engine/    pure TypeScript sim core — zero React/DOM (lint-enforced)
-src/modules/   one SimModule per lab (pingpong, replication, multileader, leaderless)
-src/ui/kit/    reusable Lab Kit — ClusterView, MetricsPanel, TimelineScrubber,
-               ChaosToolbar, ChallengePanel, KVControls, SurpriseJournal
+src/modules/   one SimModule per lab (pingpong, replication, multileader,
+               leaderless, hashring, kafkalog, rabbitqueue, redispubsub,
+               rest, graphql, grpc)
+src/ui/kit/    reusable Lab Kit — ClusterView, RingView, BrokerInternals,
+               MetricsPanel, TimelineScrubber, ChaosToolbar, ChallengePanel,
+               KVControls, SurpriseJournal
 src/ui/        React 19 + Tailwind + Zustand; SimDriver rAF bridge
 content/       per-chapter MDX debriefs
 ```

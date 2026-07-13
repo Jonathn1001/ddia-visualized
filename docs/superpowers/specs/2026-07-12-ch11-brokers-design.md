@@ -1,6 +1,11 @@
 # Ch11.1 — Broker Semantics (Kafka log vs RabbitMQ queue vs Redis pub/sub) — Design
 
-**Status:** approved (brainstorm 2026-07-12)
+**Status:** SHIPPED + deployed 2026-07-13. **Structure changed at build time:** shipped as
+**three separate flows** (11.1 Kafka Log, 11.2 RabbitMQ Queue, 11.3 Redis Pub/Sub, 11.d Debrief)
+per user request — NOT the tabbed single-lab "Approach A" with a cross-broker scoreboard described
+below (§6/§11). The scoreboard was dropped. Modules, contract, and the three challenges are as
+specced; the Kafka §10 timer risk was resolved with fetch-ack liveness + broker-side auto-commit
+(see commit history). Original design (approved brainstorm 2026-07-12) retained below for record.
 **Goal:** Ship DDIA Chapter 11 (Stream Processing) as one interactive lab comparing the three broker
 models the learner already knows by name: a **Kafka-style partitioned log**, a **RabbitMQ-style
 destructive queue**, and **Redis pub/sub fan-out**. Same topology, same workload, three fates. The
