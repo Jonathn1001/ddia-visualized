@@ -190,9 +190,34 @@ export function btreeReduce(state: BtreeState, event: ModuleEvent<StoragePayload
   return [state, []];
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- fault handling is implemented in Task 8; this is an intentional stub
+/**
+ * Replay the redo WAL into a fresh tree — recovery + torn-structure repair.
+ * Every record here is acked: applyWrite appends to `wal` and bumps `walAckSeq` in the
+ * same atomic reducer step (no un-acked tail exists in this model), so `wal.length ===
+ * walAckSeq` always holds and replaying the whole log == replaying every acked record.
+ */
+function rebuildFromWal(s: BtreeState): BtreeState {
+  let fresh = btreeInit({ nodeIds: [s.self] });
+  fresh = { ...fresh, diskCap: s.diskCap }; // keep config; diskFull cleared by recovery
+  for (const r of s.wal) fresh = applyWrite(fresh, r.key, r.val);
+  // preserve cumulative cost counters (the crash doesn't un-count past I/O)
+  return {
+    ...fresh,
+    diskReads: s.diskReads,
+    diskWrites: s.diskWrites,
+    bytesWritten: s.bytesWritten,
+    userBytes: s.userBytes,
+    wal: s.wal,
+    walAckSeq: s.walAckSeq,
+    phase: 'idle',
+  };
+}
+
 function applyFault(s: BtreeState, f: string): BtreeState {
-  return s; // implemented in Task 8
+  if (f === 'crash-mid-write') return rebuildFromWal({ ...s, phase: 'recovering' });
+  if (f === 'disk-full') return { ...s, diskFull: true };
+  if (f === 'recover') return rebuildFromWal({ ...s, diskFull: false });
+  return s;
 }
 
 export interface BtreeInspect {

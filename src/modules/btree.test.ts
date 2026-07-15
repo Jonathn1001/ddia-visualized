@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import { btreeInit, btreeReduce, btreeGet, type BtreeState } from './btree';
-import { STORAGE_TOPOLOGY, BTREE, BTREE_ORDER, type StoragePayload } from './storage-shared';
+import { STORAGE_TOPOLOGY, BTREE, BTREE_ORDER, type StoragePayload, type StorageFault } from './storage-shared';
 
 const cfg = { nodeIds: STORAGE_TOPOLOGY };
 const ev = (payload: StoragePayload) => ({ kind: 'external' as const, self: BTREE, time: 0, payload });
@@ -63,4 +63,44 @@ test('delete removes the key in place', () => {
 test('put emits no send effects', () => {
   const [, effects] = btreeReduce(btreeInit(cfg), ev({ op: 'put', key: 'm', val: '1' }));
   expect(effects.every((e) => e.type !== 'send')).toBe(true);
+});
+
+const fault = (f: StorageFault['fault']) => ({ kind: 'external' as const, self: BTREE, time: 0, payload: { fault: f } });
+
+test('crash-mid-write rebuilds every WAL-acked key from the redo log', () => {
+  let s = btreeInit(cfg);
+  for (let i = 0; i <= BTREE_ORDER; i++) s = btreeReduce(s, ev({ op: 'put', key: `k${i}`, val: String(i) }))[0];
+  s = btreeReduce(s, fault('crash-mid-write'))[0];
+  expect(s.phase).toBe('idle');
+  for (let i = 0; i <= BTREE_ORDER; i++) expect(btreeGet(s, `k${i}`).value).toBe(String(i));
+});
+
+test('crash-mid-write repairs a torn structure by replaying the WAL (non-vacuous)', () => {
+  let s = btreeInit(cfg);
+  for (let i = 0; i <= BTREE_ORDER; i++) s = btreeReduce(s, ev({ op: 'put', key: `k${i}`, val: String(i) }))[0];
+  // simulate a torn split: blank a live leaf so its keys vanish from the tree
+  // (but remain in the durable redo WAL) — recovery must replay them back.
+  const leaf = Object.values(s.pages).find((p) => p.leaf && p.keys.length > 0)!;
+  const torn: BtreeState = { ...s, pages: { ...s.pages, [leaf.id]: { ...leaf, keys: [], vals: [] } } };
+  expect(btreeGet(torn, leaf.keys[0]).value).toBeUndefined(); // key lost from live structure
+  const recovered = btreeReduce(torn, fault('crash-mid-write'))[0];
+  for (let i = 0; i <= BTREE_ORDER; i++) expect(btreeGet(recovered, `k${i}`).value).toBe(String(i)); // WAL replay restored it
+});
+
+test('disk-full rejects the split that an overflow needs', () => {
+  let s = btreeInit(cfg);
+  s = btreeReduce(s, fault('disk-full'))[0];
+  const pagesBefore = Object.keys(s.pages).length;
+  for (let i = 0; i <= BTREE_ORDER; i++) s = btreeReduce(s, ev({ op: 'put', key: `k${i}`, val: String(i) }))[0];
+  expect(s.diskFull).toBe(true);
+  expect(Object.keys(s.pages).length).toBe(pagesBefore); // no new page allocated
+});
+
+test('recover clears disk-full and the tree is consistent', () => {
+  let s = btreeInit(cfg);
+  s = btreeReduce(s, fault('disk-full'))[0];
+  for (let i = 0; i <= BTREE_ORDER; i++) s = btreeReduce(s, ev({ op: 'put', key: `k${i}`, val: String(i) }))[0];
+  s = btreeReduce(s, fault('recover'))[0];
+  expect(s.diskFull).toBe(false);
+  for (let i = 0; i <= BTREE_ORDER; i++) expect(btreeGet(s, `k${i}`).value).toBe(String(i));
 });
