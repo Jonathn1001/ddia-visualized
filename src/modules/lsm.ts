@@ -1,8 +1,8 @@
 import type { NodeId } from '../engine/events';
 import type { Effect, ModuleConfig, ModuleEvent } from '../engine/module';
 import {
-  BYTES_PER_ENTRY, DEFAULT_DISK_CAP, LSM,
-  isOp, type Counters, type StoragePayload,
+  BYTES_PER_ENTRY, DEFAULT_DISK_CAP, LSM, MEMTABLE_CAP,
+  bloomHashes, isOp, isTimer, type Counters, type StoragePayload,
 } from './storage-shared';
 
 export interface Entry {
@@ -78,6 +78,48 @@ function applyWrite(s: LsmState, key: string, val: string | null): LsmState {
   };
 }
 
+/** Bit array (set bit indices, sorted) built from every entry's bloom hashes. */
+export function buildBloom(entries: Entry[]): number[] {
+  const bits = new Set<number>();
+  for (const e of entries) for (const b of bloomHashes(e.key)) bits.add(b);
+  return [...bits].sort((a, b) => a - b);
+}
+
+/** Sound (no false negatives): true if the key's bits are all set, false only if truly absent. */
+export function bloomMightContain(bloom: number[], key: string): boolean {
+  return bloomHashes(key).every((b) => bloom.includes(b));
+}
+
+/** After a write, if the memtable is full and we're idle, request a flush (2-phase, via timer). */
+function maybeFlush(s: LsmState): [LsmState, Effect[]] {
+  if (s.phase === 'idle' && s.memtable.length > MEMTABLE_CAP) {
+    return [{ ...s, phase: 'flushing' }, [{ type: 'timer', delay: 10, payload: { timer: 'flush-phase2' } }]];
+  }
+  return [s, []];
+}
+
+/** Commits the pending memtable into a new L0 SSTable and returns the engine to idle. */
+function flushPhase2(s: LsmState): LsmState {
+  if (s.memtable.length === 0) return { ...s, phase: 'idle' };
+  const entries = s.memtable;
+  const table: SSTable = {
+    level: 0,
+    entries,
+    bloom: buildBloom(entries),
+    min: entries[0].key,
+    max: entries[entries.length - 1].key,
+  };
+  return {
+    ...s,
+    sstables: [...s.sstables, table],
+    memtable: [],
+    wal: [], // flushed prefix is now durable in the SSTable
+    bytesWritten: s.bytesWritten + entries.length * BYTES_PER_ENTRY,
+    diskWrites: s.diskWrites + 1,
+    phase: 'idle',
+  };
+}
+
 /** Point read: memtable first, then SSTables newest→oldest. Counts read cost. */
 export function lsmGet(s: LsmState, key: string): { state: LsmState; value: string | undefined } {
   const inMem = s.memtable.find((e) => e.key === key);
@@ -98,10 +140,14 @@ export function lsmGet(s: LsmState, key: string): { state: LsmState; value: stri
 
 export function lsmReduce(state: LsmState, event: ModuleEvent<StoragePayload>): [LsmState, Effect[]] {
   const p = event.payload;
+  if (isTimer(p)) {
+    if (p.timer === 'flush-phase2') return [flushPhase2(state), []];
+    return [state, []];
+  }
   if (isOp(p)) {
-    if (p.op === 'put') return [applyWrite(state, p.key, p.val), []];
-    if (p.op === 'delete') return [applyWrite(state, p.key, null), []];
     if (p.op === 'get') return [lsmGet(state, p.key).state, []]; // read updates counters
+    const written = p.op === 'put' ? applyWrite(state, p.key, p.val) : applyWrite(state, p.key, null);
+    return maybeFlush(written);
   }
   return [state, []];
 }
