@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import { lsmInit, lsmReduce, lsmGet, bloomMightContain, type LsmState } from './lsm';
-import { STORAGE_TOPOLOGY, LSM, MEMTABLE_CAP, type StoragePayload } from './storage-shared';
+import { STORAGE_TOPOLOGY, LSM, MEMTABLE_CAP, L0_TRIGGER, type StoragePayload } from './storage-shared';
 
 const cfg = { nodeIds: STORAGE_TOPOLOGY };
 const ev = (payload: StoragePayload) => ({ kind: 'external' as const, self: LSM, time: 0, payload });
@@ -93,4 +93,44 @@ test('a read skips a bloom-rejected SSTable: bloomSkips increments and read-amp 
   expect(present.value).toBe('0');
   expect(present.state.bloomSkips).toBe(rejected.state.bloomSkips);
   expect(present.state.lastReadCost).toBe(1);
+});
+
+function flushNow(s: LsmState): LsmState {
+  // fill+flush one full memtable
+  for (let i = 0; i < MEMTABLE_CAP + 1; i++) s = lsmReduce(s, ev({ op: 'put', key: `f${s.userBytes}_${i}`, val: 'v' }))[0];
+  return lsmReduce(s, { kind: 'timer', self: LSM, time: 1, payload: { timer: 'flush-phase2' } })[0];
+}
+
+test('reaching L0_TRIGGER runs schedules a compaction that produces one L1 run', () => {
+  let s = lsmInit(cfg);
+  let lastEffects;
+  for (let r = 0; r < L0_TRIGGER; r++) {
+    for (let i = 0; i < MEMTABLE_CAP + 1; i++) s = lsmReduce(s, ev({ op: 'put', key: `r${r}k${i}`, val: 'v' }))[0];
+    [s, lastEffects] = lsmReduce(s, { kind: 'timer', self: LSM, time: 1, payload: { timer: 'flush-phase2' } });
+  }
+  expect(lastEffects!.some((e) => e.type === 'timer' && (e.payload as { timer: string }).timer === 'compact')).toBe(true);
+  [s] = lsmReduce(s, { kind: 'timer', self: LSM, time: 5, payload: { timer: 'compact' } });
+  expect(s.sstables.filter((t) => t.level === 0)).toHaveLength(0);
+  expect(s.sstables.filter((t) => t.level === 1)).toHaveLength(1);
+});
+
+test('compaction keeps the newest value for a re-written key', () => {
+  let s = lsmInit(cfg);
+  // write k=old, flush, then k=new in a later run, then compact
+  s = lsmReduce(s, ev({ op: 'put', key: 'dup', val: 'old' }))[0];
+  s = flushNow(s); // pushes an L0 run containing dup=old (+ fillers)
+  s = lsmReduce(s, ev({ op: 'put', key: 'dup', val: 'new' }))[0];
+  s = flushNow(s);
+  s = flushNow(s); // third run tips L0_TRIGGER
+  [s] = lsmReduce(s, { kind: 'timer', self: LSM, time: 9, payload: { timer: 'compact' } });
+  expect(lsmGet(s, 'dup').value).toBe('new');
+});
+
+test('bytesWritten grows on compaction — this is LSM write amplification', () => {
+  let s = lsmInit(cfg);
+  const before = () => s.bytesWritten;
+  for (let r = 0; r < L0_TRIGGER; r++) s = flushNow(s);
+  const preCompact = before();
+  [s] = lsmReduce(s, { kind: 'timer', self: LSM, time: 9, payload: { timer: 'compact' } });
+  expect(s.bytesWritten).toBeGreaterThan(preCompact);
 });

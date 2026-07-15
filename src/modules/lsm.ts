@@ -1,7 +1,7 @@
 import type { NodeId } from '../engine/events';
 import type { Effect, ModuleConfig, ModuleEvent } from '../engine/module';
 import {
-  BYTES_PER_ENTRY, DEFAULT_DISK_CAP, LSM, MEMTABLE_CAP,
+  BYTES_PER_ENTRY, DEFAULT_DISK_CAP, L0_TRIGGER, LSM, MEMTABLE_CAP,
   bloomHashes, isOp, isTimer, type Counters, type StoragePayload,
 } from './storage-shared';
 
@@ -120,6 +120,48 @@ function flushPhase2(s: LsmState): LsmState {
   };
 }
 
+/** Merge sorted runs, newest-run-wins per key. `runs` ordered oldest→newest. */
+export function mergeRuns(runs: SSTable[]): Entry[] {
+  const map = new Map<string, string | null>();
+  for (const r of runs) for (const e of r.entries) map.set(e.key, e.val); // later run overwrites
+  return [...map.entries()]
+    .map(([key, val]) => ({ key, val }))
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+}
+
+function toTable(level: 0 | 1, entries: Entry[]): SSTable {
+  return {
+    level,
+    entries,
+    bloom: buildBloom(entries),
+    min: entries.length ? entries[0].key : '',
+    max: entries.length ? entries[entries.length - 1].key : '',
+  };
+}
+
+/** Merge all L0 runs (+ existing L1) into a single L1 run; drop tombstones (bottom level). */
+export function compact(s: LsmState): LsmState {
+  const l0 = s.sstables.filter((t) => t.level === 0);
+  const l1 = s.sstables.filter((t) => t.level === 1);
+  if (l0.length === 0) return { ...s, phase: 'idle' };
+  const merged = mergeRuns([...l1, ...l0]).filter((e) => e.val !== null); // L1 is the bottom → drop tombstones
+  return {
+    ...s,
+    sstables: [toTable(1, merged)],
+    bytesWritten: s.bytesWritten + merged.length * BYTES_PER_ENTRY, // rewrite cost
+    diskWrites: s.diskWrites + 1,
+    phase: 'idle',
+  };
+}
+
+/** After a flush, if L0 has accumulated enough runs, request a compaction (2-phase, via timer). */
+function maybeCompact(s: LsmState): [LsmState, Effect[]] {
+  if (s.phase === 'idle' && s.sstables.filter((t) => t.level === 0).length >= L0_TRIGGER) {
+    return [{ ...s, phase: 'compacting' }, [{ type: 'timer', delay: 15, payload: { timer: 'compact' } }]];
+  }
+  return [s, []];
+}
+
 /** Point read: memtable first, then SSTables newest→oldest. Counts read cost. */
 export function lsmGet(s: LsmState, key: string): { state: LsmState; value: string | undefined } {
   const inMem = s.memtable.find((e) => e.key === key);
@@ -152,7 +194,8 @@ export function lsmGet(s: LsmState, key: string): { state: LsmState; value: stri
 export function lsmReduce(state: LsmState, event: ModuleEvent<StoragePayload>): [LsmState, Effect[]] {
   const p = event.payload;
   if (isTimer(p)) {
-    if (p.timer === 'flush-phase2') return [flushPhase2(state), []];
+    if (p.timer === 'flush-phase2') return maybeCompact(flushPhase2(state));
+    if (p.timer === 'compact') return [compact(state), []];
     return [state, []];
   }
   if (isOp(p)) {
