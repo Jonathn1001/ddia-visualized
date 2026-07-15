@@ -180,3 +180,33 @@ test('torn-write corrupts the last run but recover rebuilds it from WAL', () => 
   expect(s.sstables.some((t) => t.torn)).toBe(false);
   expect(lsmGet(s, 'p').value).toBe('9');
 });
+
+test('torn-write recovery is lossless even after a flush already cleared the WAL', () => {
+  let s = lsmInit(cfg);
+  // Fill the memtable past MEMTABLE_CAP (4) with a..e, then run the flush timer so the
+  // entries actually land in an SSTable and the WAL is cleared (flushPhase2 clears it).
+  for (const k of ['a', 'b', 'c', 'd', 'e']) s = put(s, k, `${k}-v`);
+  expect(s.phase).toBe('flushing'); // premise: the 5th put tipped the memtable over cap
+  [s] = lsmReduce(s, { kind: 'timer', self: LSM, time: 10, payload: { timer: 'flush-phase2' } });
+  // Premise: the flush actually happened (non-vacuous) — an SSTable exists and the WAL is empty.
+  expect(s.sstables).toHaveLength(1);
+  expect(s.sstables[0].entries.map((e) => e.key)).toEqual(['a', 'b', 'c', 'd', 'e']);
+  expect(s.wal).toHaveLength(0);
+
+  // A later write goes to the WAL/memtable only (not yet flushed).
+  s = put(s, 'f', 'f-v');
+
+  // torn-write drops the newest run's last (highest-key) entry: 'e'.
+  s = lsmReduce(s, fault('torn-write'))[0];
+  expect(s.sstables.some((t) => t.torn)).toBe(true);
+
+  s = lsmReduce(s, fault('recover'))[0];
+  expect(s.sstables.some((t) => t.torn)).toBe(false);
+
+  // Every previously-acknowledged key must be readable with its correct value — including
+  // 'e', whose flush had already cleared the WAL before the tear, so a naive WAL-only
+  // rebuild loses it permanently.
+  for (const k of ['a', 'b', 'c', 'd', 'e', 'f']) {
+    expect(lsmGet(s, k).value, `key ${k}`).toBe(`${k}-v`);
+  }
+});

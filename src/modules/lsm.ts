@@ -220,8 +220,29 @@ function applyFault(s: LsmState, f: string): LsmState {
       return { ...s, memtable: [], sstables: [torn] };
     }
     const last = s.sstables.length - 1;
-    const torn = { ...s.sstables[last], entries: s.sstables[last].entries.slice(0, -1), torn: true };
-    return { ...s, sstables: s.sstables.map((t, i) => (i === last ? torn : t)) };
+    const target = s.sstables[last];
+    if (target.entries.length === 0) {
+      // Nothing to tear off an already-empty run; mark torn as a no-op (nothing to re-journal).
+      const torn = { ...target, torn: true };
+      return { ...s, sstables: s.sstables.map((t, i) => (i === last ? torn : t)) };
+    }
+    const dropped = target.entries[target.entries.length - 1];
+    const torn = { ...target, entries: target.entries.slice(0, -1), torn: true };
+    const seq = s.walAckSeq + 1;
+    // The dropped tail's flush had already cleared the WAL (flushPhase2 clears it on commit),
+    // so once the run is torn that entry is only durable if we re-journal it here — otherwise
+    // `recover`'s WAL merge below reconstructs from an incomplete log and the key is lost for
+    // good. Re-journaling continues the seq convention `applyWrite` uses, but is PREPENDED
+    // (not appended) to `s.wal`: the dropped entry was acknowledged before every write
+    // currently pending in the WAL, so it must sort as older. `recover`'s merge resolves
+    // same-key collisions by array position (later wins), so prepending guarantees a
+    // genuinely newer pending write to the same key still overrides this reconstructed one.
+    return {
+      ...s,
+      sstables: s.sstables.map((t, i) => (i === last ? torn : t)),
+      wal: [{ seq, key: dropped.key, val: dropped.val }, ...s.wal],
+      walAckSeq: seq,
+    };
   }
   if (f === 'recover') {
     // clear disk pressure and repair torn runs from the WAL/rebuild
