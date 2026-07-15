@@ -41,6 +41,26 @@ test('metrics are namespaced per engine', () => {
   expect(names).toContain('btree/read-amp');
 });
 
+test('pinned lesson: under sustained overwrites LSM write-amp exceeds B-tree (compaction is the cost)', () => {
+  const sim = fresh();
+  sim.runSteps(2);
+  // Overwrite a small keyset repeatedly. The B-tree updates in place — WAL + one page
+  // write, a flat ~2x, and no new splits once the keys exist. The LSM re-buffers each
+  // overwrite and every compaction rewrites the same live keys, so its write-amp climbs
+  // past the B-tree's. (A one-shot load of *distinct* keys would instead be dominated by
+  // the tiny-order B-tree's page splits — this workload isolates the compaction cost.)
+  for (let round = 0; round < 8; round++) {
+    for (let i = 0; i < 8; i++) {
+      sim.external(LSM, { op: 'put', key: `k${i}`, val: `v${round}` });
+      sim.external(BTREE, { op: 'put', key: `k${i}`, val: `v${round}` });
+    }
+    sim.runUntil(sim.time + 5000); // drain this round's flushes + compactions
+  }
+  const states = new Map(STORAGE_TOPOLOGY.map((id) => [id, sim.getState(id)] as const));
+  const m = Object.fromEntries(storage.metrics(states, sim.time).map((s) => [s.name, s.value]));
+  expect(m['lsm/write-amp']).toBeGreaterThan(m['btree/write-amp']);
+});
+
 test('the module emits no send effects for any op', () => {
   const sim = fresh();
   sim.runSteps(2);
