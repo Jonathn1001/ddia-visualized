@@ -1,9 +1,12 @@
 import { expect, test } from 'vitest';
 import { lsmInit, lsmReduce, lsmGet, bloomMightContain, type LsmState } from './lsm';
-import { STORAGE_TOPOLOGY, LSM, MEMTABLE_CAP, L0_TRIGGER, type StoragePayload } from './storage-shared';
+import {
+  STORAGE_TOPOLOGY, LSM, MEMTABLE_CAP, L0_TRIGGER, type StoragePayload, type StorageFault,
+} from './storage-shared';
 
 const cfg = { nodeIds: STORAGE_TOPOLOGY };
 const ev = (payload: StoragePayload) => ({ kind: 'external' as const, self: LSM, time: 0, payload });
+const fault = (f: StorageFault['fault']) => ({ kind: 'external' as const, self: LSM, time: 0, payload: { fault: f } });
 
 function put(s: LsmState, key: string, val: string): LsmState {
   return lsmReduce(s, ev({ op: 'put', key, val }))[0];
@@ -145,4 +148,35 @@ test('compaction drops a tombstone once it reaches the bottom level (L1)', () =>
   [s] = lsmReduce(s, { kind: 'timer', self: LSM, time: 9, payload: { timer: 'compact' } });
   expect(lsmGet(s, 'del').value).toBeUndefined();
   expect(s.sstables[0].entries.some((e) => e.key === 'del')).toBe(false);
+});
+
+test('crash-mid-write keeps WAL-acked keys and recovers them; volatile-only work survives via WAL', () => {
+  let s = lsmInit(cfg);
+  s = lsmReduce(s, ev({ op: 'put', key: 'durable', val: '1' }))[0]; // acked in WAL, not yet flushed
+  s = lsmReduce(s, fault('crash-mid-write'))[0];
+  expect(s.phase).toBe('idle');
+  expect(lsmGet(s, 'durable').value).toBe('1'); // replayed from WAL
+});
+
+test('disk-full stops compaction from running (L0 stays), still readable', () => {
+  let s = lsmInit(cfg);
+  s = lsmReduce(s, fault('disk-full'))[0];
+  for (let r = 0; r < L0_TRIGGER; r++) {
+    for (let i = 0; i < MEMTABLE_CAP + 1; i++) s = lsmReduce(s, ev({ op: 'put', key: `r${r}k${i}`, val: 'v' }))[0];
+    s = lsmReduce(s, { kind: 'timer', self: LSM, time: 1, payload: { timer: 'flush-phase2' } })[0];
+  }
+  s = lsmReduce(s, { kind: 'timer', self: LSM, time: 9, payload: { timer: 'compact' } })[0];
+  expect(s.diskFull).toBe(true);
+  expect(s.sstables.filter((t) => t.level === 0).length).toBeGreaterThanOrEqual(L0_TRIGGER);
+  expect(lsmGet(s, 'r0k0').value).toBe('v');
+});
+
+test('torn-write corrupts the last run but recover rebuilds it from WAL', () => {
+  let s = lsmInit(cfg);
+  s = lsmReduce(s, ev({ op: 'put', key: 'p', val: '9' }))[0];
+  s = lsmReduce(s, fault('torn-write'))[0];
+  expect(s.sstables.some((t) => t.torn)).toBe(true);
+  s = lsmReduce(s, fault('recover'))[0];
+  expect(s.sstables.some((t) => t.torn)).toBe(false);
+  expect(lsmGet(s, 'p').value).toBe('9');
 });

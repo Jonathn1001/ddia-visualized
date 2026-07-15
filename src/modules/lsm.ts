@@ -2,7 +2,7 @@ import type { NodeId } from '../engine/events';
 import type { Effect, ModuleConfig, ModuleEvent } from '../engine/module';
 import {
   BYTES_PER_ENTRY, DEFAULT_DISK_CAP, L0_TRIGGER, LSM, MEMTABLE_CAP,
-  bloomHashes, isOp, isTimer, type Counters, type StoragePayload,
+  bloomHashes, isFault, isOp, isTimer, type Counters, type StoragePayload,
 } from './storage-shared';
 
 export interface Entry {
@@ -20,6 +20,7 @@ export interface SSTable {
   bloom: number[]; // set bit indices
   min: string;
   max: string;
+  torn?: boolean; // a partially-written run (torn-write fault); untrustworthy until recovered
 }
 
 export interface LsmState extends Counters {
@@ -141,6 +142,7 @@ function toTable(level: 0 | 1, entries: Entry[]): SSTable {
 
 /** Merge all L0 runs (+ existing L1) into a single L1 run; drop tombstones (bottom level). */
 export function compact(s: LsmState): LsmState {
+  if (s.diskFull) return { ...s, phase: 'idle' }; // no headroom to merge
   const l0 = s.sstables.filter((t) => t.level === 0);
   const l1 = s.sstables.filter((t) => t.level === 1);
   if (l0.length === 0) return { ...s, phase: 'idle' };
@@ -191,8 +193,49 @@ export function lsmGet(s: LsmState, key: string): { state: LsmState; value: stri
   };
 }
 
+/** Rebuild the memtable from committed WAL records (recovery replay). */
+function recoverFromWal(s: LsmState): LsmState {
+  let memtable: Entry[] = [];
+  for (const r of s.wal) memtable = upsert(memtable, { key: r.key, val: r.val });
+  return { ...s, memtable, phase: 'idle' };
+}
+
+/**
+ * Apply a storage fault. `crash-mid-write`/`disk-full`/`recover` follow the WAL-recovery
+ * model directly. `torn-write` marks the newest run untrustworthy; when no run has been
+ * flushed yet (nothing to tear on disk), it instead tears a synthetic flush of the pending
+ * memtable — entries move out of the memtable into a torn L0 run, while the WAL (kept
+ * intact) remains the durable source `recover` repairs from.
+ */
+function applyFault(s: LsmState, f: string): LsmState {
+  if (f === 'crash-mid-write') {
+    // volatile memtable is lost on crash; the WAL is durable → replay it.
+    return recoverFromWal({ ...s, memtable: [], phase: 'recovering' });
+  }
+  if (f === 'disk-full') return { ...s, diskFull: true };
+  if (f === 'torn-write') {
+    if (s.sstables.length === 0) {
+      if (s.memtable.length === 0) return s; // nothing pending to tear
+      const torn: SSTable = { ...toTable(0, s.memtable.slice(0, -1)), torn: true };
+      return { ...s, memtable: [], sstables: [torn] };
+    }
+    const last = s.sstables.length - 1;
+    const torn = { ...s.sstables[last], entries: s.sstables[last].entries.slice(0, -1), torn: true };
+    return { ...s, sstables: s.sstables.map((t, i) => (i === last ? torn : t)) };
+  }
+  if (f === 'recover') {
+    // clear disk pressure and repair torn runs from the WAL/rebuild
+    const repaired = s.sstables.map((t) =>
+      t.torn ? toTable(t.level, mergeRuns([t, { ...t, entries: s.wal.map((r) => ({ key: r.key, val: r.val })) }])) : t,
+    );
+    return { ...s, diskFull: false, sstables: repaired };
+  }
+  return s;
+}
+
 export function lsmReduce(state: LsmState, event: ModuleEvent<StoragePayload>): [LsmState, Effect[]] {
   const p = event.payload;
+  if (isFault(p)) return [applyFault(state, p.fault), []];
   if (isTimer(p)) {
     if (p.timer === 'flush-phase2') return maybeCompact(flushPhase2(state));
     if (p.timer === 'compact') return [compact(state), []];
