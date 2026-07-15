@@ -45,7 +45,10 @@ export const CATALOG: Chapter[] = [
   {
     id: 'ch3',
     title: 'Ch.3 — Storage Engines',
-    labs: [{ id: '3.1', label: 'LSM-Tree vs B-Tree', status: 'soon' }],
+    labs: [
+      { id: '3.1', label: 'LSM-Tree vs B-Tree', status: 'active' },
+      { id: '3.d', label: 'Debrief & Journal', status: 'active' },
+    ],
   },
   {
     id: 'ch4',

@@ -16,8 +16,15 @@ test('sidebar navigates between labs; unbuilt labs disabled', () => {
   render(<App />);
   fireEvent.click(screen.getByText('Ping-Pong Token Ring'));
   expect(screen.getByText('Ping-Pong Token Ring', { selector: 'h1' })).toBeTruthy();
-  const soonBtn = screen.getByText('LSM-Tree vs B-Tree').closest('button')!;
+  const soonBtn = screen.getByText('Model Shape-Shifter').closest('button')!;
   expect(soonBtn.disabled).toBe(true);
+});
+
+test('storage lab renders from the sidebar', () => {
+  render(<App />);
+  fireEvent.click(screen.getByText('LSM-Tree vs B-Tree'));
+  expect(screen.getByText('LSM-Tree vs B-Tree', { selector: 'h1' })).toBeTruthy();
+  expect(screen.getAllByText(/B-tree/).length).toBeGreaterThan(0);
 });
 
 test('hash ring lab renders from the sidebar', () => {

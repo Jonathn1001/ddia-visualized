@@ -1,0 +1,74 @@
+# Chapter 3 — Storage Engines: Debrief
+
+## Two engines, one workload
+
+You drove an **LSM-tree** and a **B-tree** with the exact same keys and watched three
+numbers diverge: write amplification, read amplification, and space amplification. Neither
+engine is "faster" — each pays for its strength somewhere you can measure.
+
+## Why LSM writes are cheap but reads pay
+
+The LSM-tree never seeks. Every write lands in an in-memory **memtable** (durably logged to
+the WAL first), and when the memtable fills it is flushed as one sorted **SSTable** run —
+a single sequential write. That is why writes are cheap.
+
+Reads pay for it. A key could live in the memtable, or any L0 run, or L1 — so a point read
+may probe several runs newest-first. That is **read amplification**. The **bloom filter** on
+each run is the escape hatch: a probabilistic "definitely not here" that lets a read skip a
+run without scanning it. You watched bloom skips climb — every skip is a disk read the LSM
+*didn't* have to do.
+
+## Compaction is the price of sequential writes
+
+Sorted runs pile up, so the engine merges them: L0 runs collapse into L1, newest value wins,
+and tombstones are dropped at the bottom level. That merge **rewrites data you already
+wrote** — the source of LSM **write amplification**.
+
+Here is the subtlety the scoreboard makes concrete: write-amp is **workload-dependent**.
+Bulk-load a stream of *fresh* keys and the LSM compacts them roughly once (~2×) — while the
+tiny-order B-tree splits a page on almost every insert, and *its* number is higher. But
+**overwrite the same keys repeatedly** and the picture flips: every LSM compaction rewrites
+those same live keys again, so its write-amp climbs past the B-tree's. Compaction is the
+cost, and churn is what makes you pay it.
+
+## Why B-tree reads are shallow but writes are never free
+
+The B-tree keeps every key in exactly one place, in a balanced tree of fixed-fanout pages.
+A read is one root-to-leaf walk — **read amplification = height**, shallow and near-constant,
+which is why its read-amp barely moved while the LSM's wandered. You saw height grow by one
+only when the root itself split.
+
+But every write is a random in-place page write **plus** a WAL append — a flat floor of ~2×
+that never goes away, and page splits add more on top. The B-tree trades write cost for read
+predictability; the LSM trades read cost for write throughput.
+
+## What the WAL saved
+
+When you crashed both engines mid-write, the acknowledged key came back — on *both* sides.
+Neither engine trusts its in-memory or half-written state after a crash; both replay the
+**write-ahead log** to rebuild. What was lost was only the volatile part: an un-flushed
+memtable, an uncommitted split page. The log is the durability boundary — everything before
+the ack survives, everything after it is fair game.
+
+The **torn write** made the other half of the point: a partially-written run is *flagged*,
+not silently served as truth, and `recover` rebuilds it from the WAL. A checksum is what
+turns silent corruption into a detectable fault — the difference between wrong answers and an
+error.
+
+## Space vs availability, under disk-full
+
+Fill the disk and the two engines fail differently. The LSM keeps accepting writes but its
+compaction **stalls** — it needs headroom to merge and doesn't have it — so L0 piles up and
+read-amp climbs. The B-tree **refuses the split** outright. One degrades, one rejects: the
+same disk-full pressure, two philosophies about what to give up.
+
+## The trade-off you just measured
+
+Write-optimised vs read-optimised is not a slogan — it is the compaction bytes and the page
+traversals you counted, and which one wins depends on your workload.
+
+## Terms
+
+*LSM-tree* · *SSTable* · *memtable* · *write-ahead log (WAL)* · *compaction* · *bloom filter*
+· *tombstone* · *B-tree* · *page split* · *write / read / space amplification* — the storage
+vocabulary of DDIA Ch3.

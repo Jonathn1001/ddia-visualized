@@ -10,7 +10,10 @@ Design: [`docs/DESIGN_PLAN.en.md`](docs/DESIGN_PLAN.en.md) (canonical; Vietnames
 
 ## Status
 
-**Four chapters live — eleven interactive labs.**
+**Five chapters live — twelve interactive labs.**
+
+**Ch.3 — Storage Engines:**
+- **3.1 LSM-Tree vs B-Tree** — the same keys drive both engines side-by-side; memtable → SSTable flush → compaction with bloom filters next to a page-splitting B-tree, and a write/read/space amplification scoreboard. Challenges: *crash mid-write — what does the WAL save?*, *disk-full — compaction stalls vs the split is refused*, *torn write — detect the corruption*.
 
 **Ch.4 — Encoding & Dataflow** (three standalone API-style flows; same profile load, three shapes):
 - **4.1 REST** — resource-oriented: 1 + N round trips, verbose JSON. Challenge: *drop a request → a partial page, not total failure*.

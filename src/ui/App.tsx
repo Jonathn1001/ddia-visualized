@@ -14,6 +14,8 @@ import { BrokersLab } from './labs/brokers/BrokersLab';
 import { BrokersDebrief } from './labs/brokers/Debrief';
 import { ApiLab } from './labs/api/ApiLab';
 import { ApiDebrief } from './labs/api/Debrief';
+import { StorageLab } from './labs/storage/StorageLab';
+import { StorageDebrief } from './labs/storage/Debrief';
 
 interface Page {
   eyebrow: string;
@@ -57,6 +59,20 @@ const PAGES: Record<string, Omit<Page, 'body'> & { Component: () => ReactNode }>
     thesis:
       'Three nodes pass an incrementing token with retransmission. The module that validated the SimModule contract — kill a node and watch the ring heal when you revive it.',
     Component: PingPongLab,
+  },
+  '3.1': {
+    eyebrow: 'Chapter 3 — Storage Engines',
+    title: 'LSM-Tree vs B-Tree',
+    thesis:
+      'The same keys drive two engines at once. The LSM-tree buffers writes in memory and flushes sorted runs, paying later in compaction; the B-tree updates pages in place, paying up front in random writes. Watch write-amp, read-amp, and space-amp diverge — then crash them mid-write and see what the WAL saves.',
+    Component: StorageLab,
+  },
+  '3.d': {
+    eyebrow: 'Chapter 3 — Debrief',
+    title: 'Why the numbers diverged',
+    thesis:
+      'Write-optimised vs read-optimised is not a slogan — it is the compaction bytes and the page traversals you just counted. Plus what durability actually cost.',
+    Component: StorageDebrief,
   },
   '6.1': {
     eyebrow: 'Chapter 6 — Partitioning',

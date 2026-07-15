@@ -159,7 +159,7 @@ The chaos vocabulary splits into two families: **network chaos** (kill node, par
 
 **Phase 1 — Vertical slice: Chapter 5 Replication (2–3 weeks).** Replication is the first lab because it is the heart of DDIA and exercises the whole engine. Full 3 modes + debrief + 3 chaos challenges. Shipping this slice validates the entire concept. *(v1.2 note: shipped 2026-07-10 — leader-follower slice first, then the multi-leader and leaderless follow-up labs; Ch5 complete.)*
 
-**Phase 2 — Storage engines: Chapter 3 (2 weeks).** LSM vs B-tree side-by-side with I/O counters. The difference: this lab is about a data structure, not a network — forcing the engine to be general (and validating the storage-chaos family of the module contract).
+**Phase 2 — Storage engines: Chapter 3 (2 weeks).** LSM vs B-tree side-by-side with I/O counters. The difference: this lab is about a data structure, not a network — forcing the engine to be general (and validating the storage-chaos family of the module contract). *(shipped 2026-07-15 — 3.1 LSM/B-tree side-by-side with a write/read/space-amp scoreboard + 3.d debrief; three storage-chaos challenges [crash-mid-write, disk-full, torn-write] wired as `external` fault events; validated the storage-chaos family end-to-end. Ch3 complete.)*
 
 **Phase 3 — Distributed core: Chapters 6, 8, 9 (4–6 weeks).** Partitioning ring → unreliable network → Raft + linearizability checker. The hardest and most valuable cluster.
 
