@@ -70,3 +70,27 @@ test('bloom filter never rejects a key that is present', () => {
   const bloom = s.sstables[0].bloom;
   for (let i = 0; i <= MEMTABLE_CAP; i++) expect(bloomMightContain(bloom, `x${i}`)).toBe(true);
 });
+
+test('a read skips a bloom-rejected SSTable: bloomSkips increments and read-amp excludes the skip', () => {
+  let s = lsmInit(cfg);
+  for (let i = 0; i <= MEMTABLE_CAP; i++) s = lsmReduce(s, ev({ op: 'put', key: `x${i}`, val: String(i) }))[0];
+  [s] = lsmReduce(s, { kind: 'timer', self: LSM, time: 10, payload: { timer: 'flush-phase2' } });
+  expect(s.sstables).toHaveLength(1);
+
+  const missingKey = 'zz-not-present';
+  // Premise: this key is absent and the flushed SSTable's bloom provably rejects it.
+  expect(bloomMightContain(s.sstables[0].bloom, missingKey)).toBe(false);
+
+  const before = s.bloomSkips;
+  const rejected = lsmGet(s, missingKey);
+  expect(rejected.value).toBeUndefined();
+  expect(rejected.state.bloomSkips).toBe(before + 1);
+  // The only SSTable was skipped via the bloom, not scanned, so it contributes no read-amp.
+  expect(rejected.state.lastReadCost).toBe(0);
+
+  // A present-key get scans (bloom passes) but must not spuriously inflate bloomSkips.
+  const present = lsmGet(rejected.state, 'x0');
+  expect(present.value).toBe('0');
+  expect(present.state.bloomSkips).toBe(rejected.state.bloomSkips);
+  expect(present.state.lastReadCost).toBe(1);
+});

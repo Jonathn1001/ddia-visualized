@@ -127,15 +127,26 @@ export function lsmGet(s: LsmState, key: string): { state: LsmState; value: stri
     return { state: { ...s, lastReadCost: 1, diskReads: s.diskReads + 1 }, value: inMem.val ?? undefined };
   }
   let cost = 0;
+  let skips = 0;
   for (let i = s.sstables.length - 1; i >= 0; i--) {
     const t = s.sstables[i];
+    if (!bloomMightContain(t.bloom, key)) {
+      skips++;
+      continue; // bloom provably rejects: no false negatives, so this table cannot hold the key
+    }
     cost++;
     const hit = t.entries.find((e) => e.key === key);
     if (hit) {
-      return { state: { ...s, lastReadCost: cost, diskReads: s.diskReads + cost }, value: hit.val ?? undefined };
+      return {
+        state: { ...s, lastReadCost: cost, diskReads: s.diskReads + cost, bloomSkips: s.bloomSkips + skips },
+        value: hit.val ?? undefined,
+      };
     }
   }
-  return { state: { ...s, lastReadCost: cost, diskReads: s.diskReads + cost }, value: undefined };
+  return {
+    state: { ...s, lastReadCost: cost, diskReads: s.diskReads + cost, bloomSkips: s.bloomSkips + skips },
+    value: undefined,
+  };
 }
 
 export function lsmReduce(state: LsmState, event: ModuleEvent<StoragePayload>): [LsmState, Effect[]] {
