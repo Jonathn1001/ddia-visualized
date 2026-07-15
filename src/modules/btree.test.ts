@@ -29,6 +29,23 @@ test('overflowing a leaf splits it and grows the tree height', () => {
   expect(s.height).toBe(2);
 });
 
+test('a large workload splits index pages and grows height past 2, never exceeding order', () => {
+  let s = btreeInit(cfg);
+  const n = 24;
+  for (let i = 0; i < n; i++) s = put(s, `k${String(i).padStart(2, '0')}`, String(i));
+  // root index itself overflowed and split → a third level appeared
+  expect(s.height).toBeGreaterThan(2);
+  // no page (leaf or index) ever exceeds the fixed fanout
+  for (const p of Object.values(s.pages)) {
+    expect(p.keys.length).toBeLessThanOrEqual(BTREE_ORDER);
+    if (!p.leaf) expect(p.children.length).toBe(p.keys.length + 1); // index invariant
+  }
+  // every acknowledged key is still retrievable at its written value
+  for (let i = 0; i < n; i++) expect(btreeGet(s, `k${String(i).padStart(2, '0')}`).value).toBe(String(i));
+  // read cost stays equal to height (read amplification = height, still truthful)
+  expect(btreeGet(s, 'k00').state.lastReadCost).toBe(s.height);
+});
+
 test('get cost equals tree height (read amplification)', () => {
   let s = btreeInit(cfg);
   for (let i = 0; i <= BTREE_ORDER; i++) s = put(s, `k${i}`, String(i));

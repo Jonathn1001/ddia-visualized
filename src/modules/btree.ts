@@ -56,18 +56,22 @@ export function btreeInit(_config: ModuleConfig): BtreeState {
   };
 }
 
-/** Descend from root to the leaf that owns `key`, returning the leaf id. Counts reads. */
-function findLeaf(s: BtreeState, key: string): { leafId: string; reads: number } {
+/**
+ * Descend from root to the leaf that owns `key`. Returns the leaf id, the read cost
+ * (pages visited = height), and the full `path` of page ids root→leaf so a split can
+ * walk back up and push separators into each ancestor.
+ */
+function findLeaf(s: BtreeState, key: string): { leafId: string; reads: number; path: string[] } {
   let pid = s.rootId;
-  let reads = 1;
+  const path = [pid];
   while (!s.pages[pid].leaf) {
     const idx = s.pages[pid];
     let child = idx.children[0];
     for (let i = 0; i < idx.keys.length; i++) if (key >= idx.keys[i]) child = idx.children[i + 1];
     pid = child;
-    reads++;
+    path.push(pid);
   }
-  return { leafId: pid, reads };
+  return { leafId: pid, reads: path.length, path };
 }
 
 export function btreeGet(s: BtreeState, key: string): { state: BtreeState; value: string | undefined } {
@@ -104,55 +108,75 @@ function applyWrite(s: BtreeState, key: string, val: string | null): BtreeState 
     bytesWritten: s.bytesWritten + BYTES_PER_ENTRY,
     userBytes: s.userBytes + BYTES_PER_ENTRY,
   };
-  const { leafId } = findLeaf(base, key);
+  const { leafId, path } = findLeaf(base, key);
   const leaf = leafInsert(base.pages[leafId], key, val);
   const pages = { ...base.pages, [leafId]: leaf };
   const withLeaf: BtreeState = { ...base, pages, bytesWritten: base.bytesWritten + BYTES_PER_ENTRY };
-  return leaf.keys.length > BTREE_ORDER ? splitLeaf(withLeaf, leafId) : withLeaf;
+  return leaf.keys.length > BTREE_ORDER ? splitUp(withLeaf, path) : withLeaf;
 }
 
-/** Split an overflowing leaf; lift the separator into (or create) the root index. */
-function splitLeaf(s: BtreeState, leafId: string): BtreeState {
+/**
+ * Split the overflowing leaf at the end of `path`, then walk back up the ancestor chain:
+ * each split lifts a separator into its parent, which may itself overflow and split. A root
+ * overflow allocates a fresh index root and grows `height` by one — so the tree stays fixed-
+ * fanout (no page ever exceeds `BTREE_ORDER`) and read-amp = height stays truthful at any size.
+ * Leaf splits copy the separator up (it stays in the right sibling); index splits push the
+ * median up (it leaves both halves), the standard B-tree distinction.
+ */
+function splitUp(s: BtreeState, path: string[]): BtreeState {
   if (s.diskFull) return s; // no space to allocate a new page → split rejected
-  const leaf = s.pages[leafId];
-  const mid = Math.floor(leaf.keys.length / 2);
-  const rightId = `p${s.nextPage}`;
-  const left: Page = { ...leaf, keys: leaf.keys.slice(0, mid), vals: leaf.vals.slice(0, mid) };
-  const right: Page = { id: rightId, leaf: true, keys: leaf.keys.slice(mid), vals: leaf.vals.slice(mid), children: [] };
-  const separator = right.keys[0];
-  const pages = { ...s.pages, [leafId]: left, [rightId]: right };
+  const pages = { ...s.pages };
+  let nextPage = s.nextPage;
+  let rootId = s.rootId;
+  let height = s.height;
+  let diskWrites = s.diskWrites;
+  let bytesWritten = s.bytesWritten;
 
-  if (s.rootId === leafId) {
-    // leaf was the root → make a new index root
-    const newRootId = `p${s.nextPage + 1}`;
-    pages[newRootId] = { id: newRootId, leaf: false, keys: [separator], vals: [], children: [leafId, rightId] };
-    return {
-      ...s,
-      pages,
-      rootId: newRootId,
-      height: 2,
-      nextPage: s.nextPage + 2,
-      diskWrites: s.diskWrites + 2,
-      bytesWritten: s.bytesWritten + 2 * BYTES_PER_ENTRY,
-      phase: 'idle',
-    };
+  for (let depth = path.length - 1; pages[path[depth]].keys.length > BTREE_ORDER; depth--) {
+    const curId = path[depth];
+    const node = pages[curId];
+    const mid = Math.floor(node.keys.length / 2);
+    const rightId = `p${nextPage++}`;
+    let separator: string;
+    let left: Page;
+    let right: Page;
+    if (node.leaf) {
+      // leaf: copy-up — the separator (right's first key) also stays in the right sibling
+      left = { ...node, keys: node.keys.slice(0, mid), vals: node.vals.slice(0, mid) };
+      right = { id: rightId, leaf: true, keys: node.keys.slice(mid), vals: node.vals.slice(mid), children: [] };
+      separator = right.keys[0];
+    } else {
+      // index: push-up — the median key moves to the parent, leaving neither half
+      separator = node.keys[mid];
+      left = { ...node, keys: node.keys.slice(0, mid), children: node.children.slice(0, mid + 1) };
+      right = { id: rightId, leaf: false, keys: node.keys.slice(mid + 1), vals: [], children: node.children.slice(mid + 1) };
+    }
+    pages[curId] = left;
+    pages[rightId] = right;
+    diskWrites += 2;
+    bytesWritten += 2 * BYTES_PER_ENTRY;
+
+    if (curId === rootId) {
+      // the root itself split → allocate a new index root and grow height
+      const newRootId = `p${nextPage++}`;
+      pages[newRootId] = { id: newRootId, leaf: false, keys: [separator], vals: [], children: [curId, rightId] };
+      rootId = newRootId;
+      height += 1;
+      diskWrites += 1;
+      bytesWritten += BYTES_PER_ENTRY;
+      break;
+    }
+    // lift the separator into the parent (next up the path); loop re-checks it for overflow
+    const parentId = path[depth - 1];
+    const parent = pages[parentId];
+    const childIdx = parent.children.indexOf(curId);
+    const keys = [...parent.keys];
+    const children = [...parent.children];
+    keys.splice(childIdx, 0, separator);
+    children.splice(childIdx + 1, 0, rightId);
+    pages[parentId] = { ...parent, keys, children };
   }
-  // insert separator into existing root index (bounded: assume single index level)
-  const root = pages[s.rootId];
-  const childIdx = root.children.indexOf(leafId);
-  const keys = [...root.keys];
-  const children = [...root.children];
-  keys.splice(childIdx, 0, separator);
-  children.splice(childIdx + 1, 0, rightId);
-  pages[s.rootId] = { ...root, keys, children };
-  return {
-    ...s,
-    pages,
-    nextPage: s.nextPage + 1,
-    diskWrites: s.diskWrites + 2,
-    bytesWritten: s.bytesWritten + 2 * BYTES_PER_ENTRY,
-    phase: 'idle',
-  };
+  return { ...s, pages, nextPage, rootId, height, diskWrites, bytesWritten, phase: 'idle' };
 }
 
 export function btreeReduce(state: BtreeState, event: ModuleEvent<StoragePayload>): [BtreeState, Effect[]] {
