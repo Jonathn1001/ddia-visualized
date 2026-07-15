@@ -210,3 +210,31 @@ test('torn-write recovery is lossless even after a flush already cleared the WAL
     expect(lsmGet(s, k).value, `key ${k}`).toBe(`${k}-v`);
   }
 });
+
+test('torn-write recovery stays lossless when a later flush follows the tear', () => {
+  let s = lsmInit(cfg);
+  // Flush a..e into an SSTable, clearing the WAL.
+  for (const k of ['a', 'b', 'c', 'd', 'e']) s = put(s, k, `${k}-v`);
+  [s] = lsmReduce(s, { kind: 'timer', self: LSM, time: 10, payload: { timer: 'flush-phase2' } });
+  expect(s.sstables).toHaveLength(1);
+  expect(s.wal).toHaveLength(0);
+
+  // Tear the run — 'e' is dropped and re-journaled into the WAL as its only durable copy.
+  s = lsmReduce(s, fault('torn-write'))[0];
+  expect(s.sstables.some((t) => t.torn)).toBe(true);
+  expect(s.wal.some((r) => r.key === 'e')).toBe(true);
+
+  // A SECOND flush happens before recover. A naive `wal: []` would wipe the re-journaled
+  // 'e' here (its key isn't in this memtable), silently losing a cold acked key.
+  for (const k of ['g', 'h', 'i', 'j', 'k']) s = put(s, k, `${k}-v`);
+  [s] = lsmReduce(s, { kind: 'timer', self: LSM, time: 20, payload: { timer: 'flush-phase2' } });
+  expect(s.wal.some((r) => r.key === 'e')).toBe(true); // survived the flush
+  expect(s.wal.some((r) => ['g', 'h', 'i', 'j', 'k'].includes(r.key))).toBe(false); // flushed keys' records dropped
+
+  // Recover repairs the torn run from the WAL — every acked key survives, including 'e'.
+  s = lsmReduce(s, fault('recover'))[0];
+  expect(s.sstables.some((t) => t.torn)).toBe(false);
+  for (const k of ['a', 'b', 'c', 'd', 'e', 'g', 'h', 'i', 'j', 'k']) {
+    expect(lsmGet(s, k).value, `key ${k}`).toBe(`${k}-v`);
+  }
+});

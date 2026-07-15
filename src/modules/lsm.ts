@@ -110,11 +110,17 @@ function flushPhase2(s: LsmState): LsmState {
     min: entries[0].key,
     max: entries[entries.length - 1].key,
   };
+  // The flushed keys are now durable in the SSTable, so their WAL records can go.
+  // But KEEP any record whose key isn't in this memtable — a torn-write re-journals a
+  // dropped tail into the WAL for a key that lives in a torn *run*, not the memtable, and
+  // that record is the only durable copy until `recover`. Clearing the whole WAL here would
+  // silently lose it on the next flush after a tear.
+  const flushedKeys = new Set(entries.map((e) => e.key));
   return {
     ...s,
     sstables: [...s.sstables, table],
     memtable: [],
-    wal: [], // flushed prefix is now durable in the SSTable
+    wal: s.wal.filter((r) => !flushedKeys.has(r.key)),
     bytesWritten: s.bytesWritten + entries.length * BYTES_PER_ENTRY,
     diskWrites: s.diskWrites + 1,
     phase: 'idle',
