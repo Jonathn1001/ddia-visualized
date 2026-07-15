@@ -2,29 +2,15 @@
 import type { NodeId } from '../engine/events';
 import type { InspectorTree, MetricSample, SimModule } from '../engine/module';
 import {
-  LSM, round2, writeAmp, type StoragePayload,
+  LSM, writeAmp, type StoragePayload,
 } from './storage-shared';
-import { lsmInit, lsmReduce, lsmInspect, lsmGet, type LsmState } from './lsm';
+import { lsmInit, lsmReduce, lsmInspect, lsmGet, lsmSpaceAmp, type LsmState } from './lsm';
 import { btreeInit, btreeReduce, btreeInspect, btreeGet, type BtreeState } from './btree';
 
 export type StorageState = LsmState | BtreeState;
 
-/** Live (non-tombstone) key count an LSM holds — for space amplification. */
-function lsmLiveKeys(s: LsmState): number {
-  const seen = new Map<string, string | null>();
-  for (const t of s.sstables) for (const e of t.entries) seen.set(e.key, e.val);
-  for (const e of s.memtable) seen.set(e.key, e.val);
-  return [...seen.values()].filter((v) => v !== null).length;
-}
-/** Physical entries the LSM stores (incl. tombstones + overlapping runs). */
-function lsmPhysicalEntries(s: LsmState): number {
-  return s.memtable.length + s.sstables.reduce((n, t) => n + t.entries.length, 0);
-}
-
-export function spaceAmpLsm(s: LsmState): number {
-  const live = lsmLiveKeys(s);
-  return live > 0 ? round2(lsmPhysicalEntries(s) / live) : 0;
-}
+/** LSM space amplification — single source of truth lives in lsm.ts (also on LsmInspect). */
+export const spaceAmpLsm = lsmSpaceAmp;
 
 export const storage: SimModule<StorageState, StoragePayload> = {
   id: 'storage-engines',

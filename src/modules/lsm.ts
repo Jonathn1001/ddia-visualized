@@ -2,7 +2,7 @@ import type { NodeId } from '../engine/events';
 import type { Effect, ModuleConfig, ModuleEvent } from '../engine/module';
 import {
   BYTES_PER_ENTRY, DEFAULT_DISK_CAP, L0_TRIGGER, LSM, MEMTABLE_CAP,
-  bloomHashes, isFault, isOp, isTimer, type Counters, type StoragePayload,
+  bloomHashes, isFault, isOp, isTimer, round2, type Counters, type StoragePayload,
 } from './storage-shared';
 
 export interface Entry {
@@ -270,6 +270,21 @@ export function lsmReduce(state: LsmState, event: ModuleEvent<StoragePayload>): 
   return [state, []];
 }
 
+/**
+ * LSM space amplification = physical entries stored / live keys. Physical entries count
+ * tombstones and every copy of a key across overlapping runs (the cost compaction reclaims);
+ * live keys are the distinct non-tombstone keys a reader would actually find (newest wins:
+ * memtable over sstables, later sstables over earlier). Returns 0 when nothing is live.
+ */
+export function lsmSpaceAmp(s: LsmState): number {
+  const seen = new Map<string, string | null>();
+  for (const t of s.sstables) for (const e of t.entries) seen.set(e.key, e.val);
+  for (const e of s.memtable) seen.set(e.key, e.val);
+  const live = [...seen.values()].filter((v) => v !== null).length;
+  const physical = s.memtable.length + s.sstables.reduce((n, t) => n + t.entries.length, 0);
+  return live > 0 ? round2(physical / live) : 0;
+}
+
 export interface LsmInspect {
   engine: 'lsm';
   memtable: Entry[];
@@ -282,6 +297,7 @@ export interface LsmInspect {
   userBytes: number;
   lastReadCost: number;
   bloomSkips: number;
+  spaceAmp: number;
   diskFull: boolean;
 }
 
@@ -298,6 +314,7 @@ export function lsmInspect(s: LsmState): LsmInspect {
     userBytes: s.userBytes,
     lastReadCost: s.lastReadCost,
     bloomSkips: s.bloomSkips,
+    spaceAmp: lsmSpaceAmp(s),
     diskFull: s.diskFull,
   };
 }
