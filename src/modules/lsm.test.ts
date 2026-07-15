@@ -134,3 +134,15 @@ test('bytesWritten grows on compaction — this is LSM write amplification', () 
   [s] = lsmReduce(s, { kind: 'timer', self: LSM, time: 9, payload: { timer: 'compact' } });
   expect(s.bytesWritten).toBeGreaterThan(preCompact);
 });
+
+test('compaction drops a tombstone once it reaches the bottom level (L1)', () => {
+  let s = lsmInit(cfg);
+  s = lsmReduce(s, ev({ op: 'put', key: 'del', val: 'x' }))[0];
+  s = flushNow(s); // L0 run containing del=x (+ fillers)
+  s = lsmReduce(s, ev({ op: 'delete', key: 'del' }))[0];
+  s = flushNow(s); // L0 run containing del=null tombstone (+ fillers)
+  s = flushNow(s); // third run tips L0_TRIGGER
+  [s] = lsmReduce(s, { kind: 'timer', self: LSM, time: 9, payload: { timer: 'compact' } });
+  expect(lsmGet(s, 'del').value).toBeUndefined();
+  expect(s.sstables[0].entries.some((e) => e.key === 'del')).toBe(false);
+});
