@@ -157,3 +157,46 @@ test('healing the partition deposes the old leader and truncates its tail; the l
     if (s.commitIndex >= 1) expect(s.log[0].value).toBe(7);
   }
 });
+
+test('kill and revive cycles never yield two leaders in one term', () => {
+  const sim = fresh(9007);
+  const leadersByTerm = new Map<number, Set<string>>();
+  const snapshotLeaders = () => {
+    for (const n of RAFT_NODES) {
+      const s = st(sim, n);
+      if (s.role === 'leader') {
+        const set = leadersByTerm.get(s.term) ?? new Set();
+        set.add(n);
+        leadersByTerm.set(s.term, set);
+      }
+    }
+  };
+  until(sim, () => leaders(sim).length >= 1);
+  snapshotLeaders();
+  for (let round = 0; round < 3; round++) {
+    const lead = leaders(sim)[0];
+    if (lead) sim.control({ type: 'kill', node: lead });
+    for (let i = 0; i < 3000 && sim.pending > 0; i++) {
+      sim.runSteps(1);
+      snapshotLeaders();
+    }
+    if (lead) sim.control({ type: 'revive', node: lead });
+    for (let i = 0; i < 3000 && sim.pending > 0; i++) {
+      sim.runSteps(1);
+      snapshotLeaders();
+    }
+  }
+  for (const [, set] of leadersByTerm) expect(set.size).toBe(1);
+});
+
+test('a revived old leader with a stale term steps down on first contact', () => {
+  const sim = fresh();
+  until(sim, () => leaders(sim).length === 1);
+  const old = leaders(sim)[0];
+  sim.control({ type: 'kill', node: old });
+  until(sim, () => leaders(sim).some((l) => l !== old), 20000);
+  sim.control({ type: 'revive', node: old });
+  until(sim, () => st(sim, old).role === 'follower', 20000);
+  const neo = leaders(sim).find((l) => l !== old) as string;
+  expect(st(sim, old).term).toBeGreaterThanOrEqual(st(sim, neo).term - 1);
+});
