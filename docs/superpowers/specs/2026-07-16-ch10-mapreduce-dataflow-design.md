@@ -24,14 +24,19 @@ YAGNI, breaks lab consistency) · one module with two sub-engines (Approach A).
 ## 1. Scope
 
 **In:**
-- `src/modules/batch-shared.ts` — worker topology (`['W1'..'W3']` per side), the
-  fixed 24-record access log + 3-split layout, URL set + expected final counts,
-  task/status/message payload types, timing constants.
-- `src/modules/batch.ts` — one `SimModule<BatchState>` holding TWO sub-engine states
-  (`mr`, `df`) advanced by the same event stream: seeded deterministic task
+- `src/modules/batch-shared.ts` — worker topology (**3 sim nodes** `['W1'..'W3']`,
+  shared by both sub-engines), the fixed 24-record access log + 3-split layout, URL
+  set + expected final counts, task/status/message payload types, timing constants.
+- `src/modules/batch.ts` — one `SimModule<BatchState>`; **each node's state holds
+  both sub-engine branches `{mr, df}`**, and every message payload is tagged with
+  its side. One engine `kill`/`revive` on a node therefore hits both sides
+  atomically by construction. (Deliberately NOT the ch3 shape — `storage.ts:20`
+  routes one engine per *node*, which cannot host shuffle messages *between*
+  workers; this per-node twin-branch shape is new.) Seeded deterministic task
   scheduling, engine timers for task progress, shuffle as SimNetwork messages,
   Hadoop-faithful MR recovery, restart-from-input dataflow recovery, per-side
-  counters, `inspect`/`metrics` for the panels.
+  counters, `inspect`/`metrics` for the panels. Chaos declaration:
+  `chaos: ['kill-node']` — ChaosToolbar renders kill + revive buttons from it.
 - Lab `src/ui/labs/batch/BatchLab.tsx` (10.1): two `StagePanel`s (MR top, dataflow
   bottom), shared `run job` control, `ChaosToolbar` (kill/revive only — one action
   hits both sub-engines atomically), `MetricsPanel`, `ChallengePanel` ×3,
@@ -47,7 +52,9 @@ YAGNI, breaks lab consistency) · one module with two sub-engines (Approach A).
 partitioned hash — prose only), speculative execution, a killable JobTracker/master,
 multi-job workflows (Hive/Pig chains), checkpointing (Flink barriers) and RDD
 partition-granular recompute (Spark) — mentioned as the real fixes for the dataflow
-restart, combiners, HDFS replication mechanics.
+restart, combiners, HDFS replication mechanics, **Hadoop's early shuffle fetch**
+(real Hadoop starts reducer fetch per completed map; only `reduce()` waits for all —
+simplified here to a hard barrier, an intended simplification).
 
 ---
 
@@ -63,10 +70,18 @@ tasks (partition = `hash(url) % 2`; reduce = count per URL). Expected final outp
 `/home 10, /about 6, /cart 4, /faq 2, /login 2` — is a shared constant; the output
 table is right or wrong at a glance, and tests assert it exactly.
 
-**Cluster per side:** 3 workers (`W1`–`W3`). The scheduler (JobTracker analogue) is
-abstract, immortal module state — not a killable node; master failure is a named cut.
-Scheduling is deterministic: lowest-numbered idle worker takes the lowest-numbered
-runnable task; the engine's seeded RNG governs only per-message network latency.
+**Cluster:** 3 sim nodes (`W1`–`W3`); each hosts both sub-engines' worker state
+(§1). The scheduler (JobTracker analogue) is abstract, immortal module state — not a
+killable node; master failure is a named cut. Scheduling is deterministic; the
+engine's seeded RNG governs only per-message network latency.
+
+- **MR side (one task slot per worker):** lowest-numbered idle worker takes the
+  lowest-numbered runnable task. Phases are sequential (barrier), so 3 workers never
+  see more than 3 runnable tasks.
+- **Dataflow side (two task slots per worker):** all five operators are placed up
+  front — reducers pinned first (`r0→W1`, `r1→W2`), then maps by the same
+  lowest-idle rule (`m0→W3`, `m1→W1`, `m2→W2`). Reducers exist from tick 0, so every
+  streamed record has a live destination; no barrier, no deadlock.
 
 **Task execution:** a running task consumes ticks via engine timers (per-record
 cost × records in the split/partition). `run job` is an external event, entering via
@@ -109,10 +124,11 @@ re-enable the button.
   in-memory lineage (a re-run mapper would double-count records the reducer already
   folded; a dead reducer loses its aggregate). Killing an idle worker costs nothing.
   A poisoning kill restarts the job from the input:
-  `restarts += 1`, all partial state cleared, ticks spent so far added to
-  `ticksWasted`. Restart begins automatically on the next scheduling tick using only
-  live workers. This is the honest un-checkpointed contrast; Spark/Flink mitigations
-  are debrief prose.
+  `restarts += 1`, all partial state cleared, this attempt's task-execution ticks
+  added to `ticksWasted`. Restart begins automatically on the next scheduling tick
+  using only live workers; **if zero workers are live, the restart waits for the
+  first revive**. This is the honest un-checkpointed contrast; Spark/Flink
+  mitigations are debrief prose.
 
 **Both sides:** a job always completes as long as ≥1 worker is live per side (tasks
 queue on fewer workers; killing all 3 pauses the job until a revive).
@@ -144,6 +160,14 @@ Per side, in `metrics()` (six counters, MetricsPanel renders both columns):
 `tasksReexecuted` · `restarts` (always 0 on mr) · `ticksWasted` · `completionTick`
 (null until done).
 
+**`ticksWasted` definition — task-execution ticks discarded by kills.** Idle and
+barrier-wait ticks never count.
+- MR: partial execution ticks of a killed running task, plus the full original
+  execution ticks of any `done` task whose un-fetched output died with its disk
+  (each `lostAfterDone` re-run counts its first attempt's ticks).
+- Dataflow: on each restart, the sum of all task-execution ticks spent in the
+  aborted attempt (per-worker running totals, snapshotted at restart).
+
 `inspect()` per side: worker states (task, status, disk contents count), stage
 progress, output rows so far — everything `StagePanel` renders, UI reads no module
 internals.
@@ -169,8 +193,11 @@ catalog/App/README/DESIGN_PLAN    wiring (10.1/10.d active, counters, Phase 4 no
 **Property suite invariants:** (a) under any kill/revive script keeping ≥1 live
 worker per side, both jobs eventually complete; (b) on completion, output counts
 equal the expected constant exactly — both sides, always; (c) under a single-kill
-script hitting both sides, `mr.ticksWasted ≤ df.ticksWasted`; (d) same script + seed
-→ identical states (determinism).
+script whose kill fires while both jobs are still running AND **triggers a dataflow
+restart** (`df.restarts ≥ 1`), `mr.ticksWasted ≤ df.ticksWasted` — a kill the
+pipeline shrugs off (victim held no running df task or reducer state) makes no
+claim, since MR can still lose an un-fetched map output to the same kill; (d) same
+script + seed → identical states (determinism).
 
 ---
 
