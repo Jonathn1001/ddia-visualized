@@ -162,9 +162,10 @@ assumptions:
   wrote **disjoint** key sets, and both commits stand. (The doctors shape: both read
   {alice,bob}, one wrote alice, the other bob.)
 
-`metrics()` per node: `commits`, `aborts`, `dirtyReads`, `lostUpdates`, `writeSkews`,
-`queuedOps`, `skippedOps`. `inspect()` exposes the full txn table + anomaly log +
-final committed store for the scoreboard, panels, and verifiers.
+`metrics()` per node: `commits`, `aborts`, `anomalies` (total). Per-type anomaly
+counts, `queuedOps` and `skippedOps` live on `inspect()` — the scoreboard reads
+inspect, not the metrics stream. `inspect()` exposes the full txn table + anomaly
+log + final committed store for the scoreboard, panels, and verifiers.
 
 ---
 
