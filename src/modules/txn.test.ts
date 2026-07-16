@@ -319,6 +319,22 @@ test('write skew: NOT flagged for disjoint writes without cross-reads', () => {
   expect(st(sim, 'RC').anomalies).toEqual([]);
 });
 
+test('lost update: NOT flagged when a txn blind-writes then reads its own write (no foreign base)', () => {
+  const sim = fresh({ x: 10 });
+  play(sim, [
+    { txn: 'T1', op: { op: 'begin' } },
+    { txn: 'T1', op: { op: 'write', key: 'x', value: 5 } },
+    { txn: 'T1', op: { op: 'commit' } },
+    { txn: 'T2', op: { op: 'begin' } },
+    { txn: 'T2', op: { op: 'write', key: 'x', value: 7 } },
+    { txn: 'T2', op: { op: 'read', key: 'x' } },
+    { txn: 'T2', op: { op: 'commit' } },
+  ]);
+  for (const id of TXN_TOPOLOGY) {
+    expect(st(sim, id).anomalies.filter((a) => a.type === 'lost-update')).toEqual([]);
+  }
+});
+
 test('write skew: NOT flagged when the txns did not overlap in time', () => {
   const sim = fresh({ alice: 1, bob: 1 });
   play(sim, [

@@ -64,12 +64,13 @@ export interface TxnState {
   queuedOps: number;
   skippedOps: number;
   /**
-   * Monotonic per-node logical clock, ticked on begin/commit only.
-   * The harness's virtual `time` is the same instant for every step of a
-   * schedule (this module emits no timer/message effects, so the sim clock
-   * never advances on its own) — SI's begin/commit ordering needs a signal
-   * that actually varies, so `snapshotAt`/`committedAt` are stamped from
-   * this instead of the (degenerate) `time` parameter.
+   * Monotonic per-node logical clock, ticked on begin/commit only — the
+   * module's SOLE logical-time signal. The harness's virtual `time` is the
+   * same instant for every step of a schedule (this module emits no
+   * timer/message effects, so the sim clock never advances on its own) and
+   * is never read here. Every timestamp in this state is stamped from this
+   * clock: `snapshotAt`/`committedAt`, the `beganAt`/`endedAt` txn windows,
+   * and every `Anomaly.at`.
    */
   clock: number;
 }
@@ -200,7 +201,10 @@ function doAbort(s: TxnState, txnId: TxnId, reason: string): void {
 function detectLostUpdate(s: TxnState, txnId: TxnId): void {
   const t = s.txns[txnId];
   for (const key of t.writes) {
-    const lastRead = [...t.reads].reverse().find((r) => r.key === key);
+    // The base is the last FOREIGN read — reads after an own write return the
+    // own version (read-your-writes, from === txnId), which is no external
+    // dependency at all. Foreign reads necessarily precede the first own write.
+    const lastRead = [...t.reads].reverse().find((r) => r.key === key && r.from !== txnId);
     if (!lastRead) continue; // blind write — not a read-modify-write clobber
     const readStamp = lastRead.versionCommittedAt ?? -1;
     const clobbered = (s.store[key] ?? []).some(
