@@ -12,7 +12,6 @@ import {
 import { SimDriver } from '../../bridge/SimDriver';
 import { useSimStore } from '../../bridge/simStore';
 import { ChallengePanel } from '../../kit/ChallengePanel';
-import { TimelineScrubber } from '../../kit/TimelineScrubber';
 import { IsolationPanel } from './IsolationPanel';
 import { SchedulePanel } from './SchedulePanel';
 import { TxnScoreboard } from './TxnScoreboard';
@@ -94,15 +93,9 @@ export function TxnLab() {
         ))}
       </div>
 
-      <TimelineScrubber
-        processed={view.processed}
-        pending={view.pending}
-        running={view.running}
-        onPlayPause={() => (view.running ? driver.pause() : driver.start())}
-        onStep={() => driver.stepOnce()}
-        onScrub={(i) => driver.scrubTo(i)}
-      />
-
+      {/* No TimelineScrubber here: this lab drains every step synchronously, so there is
+          never pending work to play — and a backward scrub would rewind the panels while
+          the SchedulePanel cursor stays put. The schedule IS the timeline; reset rewinds. */}
       <ChallengePanel
         title="Challenge: read a lie"
         storageKeyPrefix="ddia:ch07:dirty"
