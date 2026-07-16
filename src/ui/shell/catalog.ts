@@ -89,7 +89,10 @@ export const CATALOG: Chapter[] = [
   {
     id: 'ch8',
     title: 'Ch.8 — Distributed Trouble',
-    labs: [{ id: '8.1', label: 'Unreliable Network Playground', status: 'soon' }],
+    labs: [
+      { id: '8.1', label: 'Unreliable Network Playground', status: 'active' },
+      { id: '8.d', label: 'Debrief & Journal', status: 'active' },
+    ],
   },
   {
     id: 'ch9',

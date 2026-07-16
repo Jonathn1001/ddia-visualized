@@ -18,6 +18,8 @@ import { StorageLab } from './labs/storage/StorageLab';
 import { StorageDebrief } from './labs/storage/Debrief';
 import { TxnLab } from './labs/txn/TxnLab';
 import { TxnDebrief } from './labs/txn/Debrief';
+import { LeaseLab } from './labs/lease/LeaseLab';
+import { LeaseDebrief } from './labs/lease/Debrief';
 
 interface Page {
   eyebrow: string;
@@ -103,6 +105,20 @@ const PAGES: Record<string, Omit<Page, 'body'> & { Component: () => ReactNode }>
     thesis:
       'Each level buys off exactly one class of race, and each rung costs more — aborts, queueing, throughput. Why "use transactions" is the start of the conversation, not the end.',
     Component: TxnDebrief,
+  },
+  '8.1': {
+    eyebrow: 'Chapter 8 — The Trouble with Distributed Systems',
+    title: 'Unreliable Network Playground',
+    thesis:
+      'A lease-based lock, two workers, a shared store — over a network that delays, drops and duplicates. GC-pause the lease holder and watch it corrupt the store from the past; turn on fencing tokens and watch the same write bounce; then do it again with nothing but a slow clock.',
+    Component: LeaseLab,
+  },
+  '8.d': {
+    eyebrow: 'Chapter 8 — Debrief',
+    title: 'Timeouts, pauses, and the number that saves you',
+    thesis:
+      'Partial failure, process pauses, and untrustworthy clocks — why the check must travel with the act, and what a fencing token actually buys.',
+    Component: LeaseDebrief,
   },
   '11.1': {
     eyebrow: 'Chapter 11 — Stream Processing',

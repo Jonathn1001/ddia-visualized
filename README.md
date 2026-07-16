@@ -31,6 +31,9 @@ Design: [`docs/DESIGN_PLAN.en.md`](docs/DESIGN_PLAN.en.md) (canonical; Vietnames
 **Ch.7 — Transactions:**
 - **7.1 Isolation Anomaly Lab** — one preset schedule, four isolation levels running side-by-side (Read Uncommitted / Read Committed / Snapshot Isolation / Serializable-as-serial-execution); step the interleaving op-by-op and watch each anomaly die at a successive rung. Challenges: *read a lie (dirty read)*, *the vanishing increment (lost update)*, *nobody's on call (write skew under SI — Kleppmann's doctors)*.
 
+**Ch.8 — The Trouble with Distributed Systems:**
+- **8.1 Unreliable Network Playground** — a lease lock service, two check-then-act workers and a shared store over a genuinely unreliable network (latency/drop/duplicate/partition sliders). Challenges: *the lease is a lie (GC-pause the holder — DDIA fig 8-4)*, *fence it (same failure, fencing tokens on)*, *the clock lies too (corruption via a slow clock, no pause at all)*.
+
 **Ch.11 — Stream Processing** (three standalone broker flows; same workload, three delivery fates):
 - **11.1 Kafka Log** — replayable log, offset commits, session-timeout replay. Challenge: *make the group process a message twice*.
 - **11.2 RabbitMQ Queue** — destructive queue, per-message acks, ack-timeout redelivery + dead-letter. Challenge: *resurrect a message on the survivor*.

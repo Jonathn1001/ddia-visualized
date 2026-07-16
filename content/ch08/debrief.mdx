@@ -1,0 +1,47 @@
+# Chapter 8 — The Trouble with Distributed Systems: Debrief
+
+## Partial failure is the defining problem
+
+On one machine, things either work or crash. Across a network, a request can be lost,
+delayed, reordered, duplicated — or succeed while its *reply* is lost. You drove all of
+those with sliders, and the system had no way to tell one from another. The only tool a
+node has is a timeout, and a timeout proves nothing about what happened remotely.
+
+## The lease looked safe — and wasn't
+
+The lock service did everything right: one holder at a time, hard expiry on its own
+clock. The corruption came from the *gap between checking and acting*. W1 checked its
+lease, started working, and the world moved on without it — a GC pause froze the
+process, the lease expired, W2 took over, and W1's write arrived from the past. Kleppmann's
+figure 8-4, live. Note there was no expiry notification to save it: a lease client learns
+its lease is gone only from its own clock — and its clock was frozen with the rest of the
+process.
+
+## Process pauses are real
+
+Stop-the-world garbage collection, VM migration, laptop lids, disk swaps, SIGSTOP — a
+thread can stop for seconds at any line of code. You cannot write "check, then quickly
+use it" and hope. Any check-then-act on shared state needs the check to travel WITH the
+act — which is exactly what the fencing token does.
+
+## Fencing tokens
+
+One monotonically increasing number, handed out with each lease, attached to each write,
+checked at the resource. The store rejects anything below its watermark. The pause still
+happens; the stale write still arrives; it just bounces. Mutual exclusion enforced at the
+*resource*, not at the lock — because the lock is not the one being corrupted.
+
+## Clocks are not to be trusted
+
+The third corruption needed no pause at all: a clock running at half speed made W1
+believe a 60-tick lease for 120 ticks. Time-of-day clocks jump (NTP), monotonic clocks
+drift, and a lease is only as good as the *worst* clock that reads it. Google's TrueTime
+puts error bounds on every read and waits them out; everyone else should treat elapsed
+time as a rumor.
+
+## Terms
+
+*partial failure* · *unbounded delay* · *timeout* · *process pause (GC, VM migration)* ·
+*lease* · *fencing token* · *clock skew / drift* · *monotonic vs time-of-day clocks* ·
+*Byzantine faults (not modeled here — nodes fail, they don't lie)* — the vocabulary of
+DDIA Ch8.
