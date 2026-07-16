@@ -115,3 +115,45 @@ test('mergedHistory orders same-node ties numerically, not lexicographically', (
   const merged = mergedHistory(states as Map<string, RaftState>);
   expect(merged.map((r) => r.id)).toEqual(['N1:9', 'N1:10']);
 });
+
+test('a minority-partitioned leader cannot commit; the majority elects a successor', () => {
+  const sim = fresh();
+  until(sim, () => leaders(sim).length === 1);
+  const old = leaders(sim)[0];
+  const others = RAFT_NODES.filter((n) => n !== old);
+  const buddy = others[0];
+  const majority = others.slice(1); // three nodes
+  sim.control({ type: 'partition', groups: [[old, buddy], majority] });
+  sim.external(old, { cmd: 'write', value: 99 });
+  // the majority elects a new leader with a higher term
+  until(sim, () => majority.some((n) => st(sim, n).role === 'leader'), 20000);
+  const neo = majority.find((n) => st(sim, n).role === 'leader') as string;
+  expect(st(sim, neo).term).toBeGreaterThan(st(sim, old).term - 1);
+  // the old leader's write is stuck pending — a minority cannot decide
+  const row = st(sim, old).history.find((h) => h.op === 'write');
+  expect(row?.outcome).toBe('pending');
+  expect(st(sim, old).commitIndex).toBe(0);
+});
+
+test('healing the partition deposes the old leader and truncates its tail; the lost write is marked', () => {
+  const sim = fresh();
+  until(sim, () => leaders(sim).length === 1);
+  const old = leaders(sim)[0];
+  const others = RAFT_NODES.filter((n) => n !== old);
+  const majority = others.slice(1);
+  sim.control({ type: 'partition', groups: [[old, others[0]], majority] });
+  sim.external(old, { cmd: 'write', value: 99 }); // will be lost
+  until(sim, () => majority.some((n) => st(sim, n).role === 'leader'), 20000);
+  const neo = majority.find((n) => st(sim, n).role === 'leader') as string;
+  sim.external(neo, { cmd: 'write', value: 7 }); // will commit
+  until(sim, () => st(sim, neo).commitIndex >= 1, 6000);
+  sim.control({ type: 'heal' });
+  // old leader steps down and converges on the new log
+  until(sim, () => st(sim, old).role === 'follower' && st(sim, old).kv === 7, 20000);
+  until(sim, () => st(sim, old).history.find((h) => h.op === 'write')?.outcome === 'lost', 6000);
+  // no committed entry lost anywhere
+  for (const n of RAFT_NODES) {
+    const s = st(sim, n);
+    if (s.commitIndex >= 1) expect(s.log[0].value).toBe(7);
+  }
+});
