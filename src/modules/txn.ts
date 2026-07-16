@@ -1,0 +1,250 @@
+// src/modules/txn.ts
+// Ch7 Isolation Anomaly Lab — one transaction engine, four isolation semantics.
+// The node id IS the isolation level; the reducer interprets schedule steps
+// (injected as external events) under that level. Pure, zero effects.
+import type { InspectorTree, MetricSample, ModuleConfig, SimModule } from '../engine/module';
+import {
+  CREDOS,
+  type Level,
+  type Op,
+  type ScheduleStep,
+  type TxnId,
+  type TxnPayload,
+  type WriteValue,
+} from './txn-shared';
+
+export interface Version {
+  value: number;
+  /** Writer; null for the preset's seed versions. */
+  txn: TxnId | null;
+  /** null while uncommitted; stamped with the commit event's virtual time. */
+  committedAt: number | null;
+}
+
+export interface ReadRecord {
+  key: string;
+  value: number;
+  /** committedAt of the version read (null = read an uncommitted version). */
+  versionCommittedAt: number | null;
+  /** Writer of the version read; null for seed versions. */
+  from: TxnId | null;
+}
+
+export type TxnStatus = 'idle' | 'active' | 'waiting' | 'committed' | 'aborted';
+
+export interface TxnInfo {
+  status: TxnStatus;
+  beganAt: number | null;
+  endedAt: number | null;
+  /** SI only: versions committed at or before this time are visible. */
+  snapshotAt: number | null;
+  reads: ReadRecord[];
+  writes: string[];
+  abortReason: string | null;
+}
+
+export interface Anomaly {
+  type: 'dirty-read' | 'lost-update' | 'write-skew';
+  detail: string;
+  at: number;
+}
+
+export interface TxnState {
+  level: Level;
+  /** Per-key append-only version chains, oldest → newest. */
+  store: Record<string, Version[]>;
+  txns: Record<TxnId, TxnInfo>;
+  /** SER only: ops parked while another txn holds the engine. */
+  queue: ScheduleStep[];
+  /** SER only: the one admitted txn. */
+  activeSer: TxnId | null;
+  anomalies: Anomaly[];
+  commits: number;
+  aborts: number;
+  queuedOps: number;
+  skippedOps: number;
+}
+
+const freshTxn = (): TxnInfo => ({
+  status: 'idle',
+  beganAt: null,
+  endedAt: null,
+  snapshotAt: null,
+  reads: [],
+  writes: [],
+  abortReason: null,
+});
+
+export function txnInit(level: Level, config: ModuleConfig): TxnState {
+  const initial = (config.params?.initial ?? {}) as Record<string, number>;
+  const store: Record<string, Version[]> = {};
+  for (const [k, v] of Object.entries(initial)) store[k] = [{ value: v, txn: null, committedAt: 0 }];
+  return {
+    level,
+    store,
+    txns: { T1: freshTxn(), T2: freshTxn() },
+    queue: [],
+    activeSer: null,
+    anomalies: [],
+    commits: 0,
+    aborts: 0,
+    queuedOps: 0,
+    skippedOps: 0,
+  };
+}
+
+/**
+ * The level's read rule, walking the chain newest → oldest.
+ * Own uncommitted writes are always visible (read-your-writes) at every level.
+ */
+function pickVersion(s: TxnState, reader: TxnId, key: string): Version | undefined {
+  const chain = s.store[key] ?? [];
+  for (let i = chain.length - 1; i >= 0; i--) {
+    const v = chain[i];
+    if (v.txn === reader && v.committedAt === null) return v;
+    if (s.level === 'RU') return v; // latest version, committed or not
+    if (v.committedAt === null) continue; // foreign uncommitted — invisible at RC/SI/SER
+    if (s.level === 'SI') {
+      const snap = s.txns[reader].snapshotAt;
+      if (snap !== null && v.committedAt > snap) continue; // too new for this snapshot
+    }
+    return v;
+  }
+  return undefined;
+}
+
+function doRead(s: TxnState, txnId: TxnId, key: string, time: number): void {
+  const t = s.txns[txnId];
+  const v = pickVersion(s, txnId, key);
+  t.reads.push({
+    key,
+    value: v?.value ?? 0,
+    versionCommittedAt: v?.committedAt ?? null,
+    from: v?.txn ?? null,
+  });
+  if (v && v.committedAt === null && v.txn !== txnId) {
+    s.anomalies.push({
+      type: 'dirty-read',
+      detail: `${txnId} read ${key}=${v.value} — uncommitted data from ${v.txn}`,
+      at: time,
+    });
+  }
+}
+
+function doWrite(s: TxnState, txnId: TxnId, key: string, value: WriteValue, time: number): void {
+  const t = s.txns[txnId];
+  let resolved: number;
+  if (typeof value === 'number') {
+    resolved = value;
+  } else {
+    const prior = [...t.reads].reverse().find((r) => r.key === key);
+    if (prior) {
+      resolved = prior.value + value.inc;
+    } else {
+      // blind increment: read at write time and record the dependency,
+      // so the lost-update detector still sees the read-modify-write shape
+      doRead(s, txnId, key, time);
+      resolved = t.reads[t.reads.length - 1].value + value.inc;
+    }
+  }
+  (s.store[key] ??= []).push({ value: resolved, txn: txnId, committedAt: null });
+  if (!t.writes.includes(key)) t.writes.push(key);
+}
+
+function dropUncommitted(s: TxnState, txnId: TxnId): void {
+  for (const key of Object.keys(s.store)) {
+    s.store[key] = s.store[key].filter((v) => !(v.txn === txnId && v.committedAt === null));
+  }
+}
+
+function doAbort(s: TxnState, txnId: TxnId, time: number, reason: string): void {
+  const t = s.txns[txnId];
+  dropUncommitted(s, txnId);
+  t.status = 'aborted';
+  t.endedAt = time;
+  t.abortReason = reason;
+  s.aborts += 1;
+}
+
+function doCommit(s: TxnState, txnId: TxnId, time: number): void {
+  const t = s.txns[txnId];
+  for (const key of Object.keys(s.store)) {
+    for (const v of s.store[key]) if (v.txn === txnId && v.committedAt === null) v.committedAt = time;
+  }
+  t.status = 'committed';
+  t.endedAt = time;
+  s.commits += 1;
+}
+
+function apply(s: TxnState, txnId: TxnId, op: Op, time: number): void {
+  const t = s.txns[txnId];
+  switch (op.op) {
+    case 'begin':
+      t.status = 'active';
+      t.beganAt = time;
+      if (s.level === 'SI') t.snapshotAt = time;
+      break;
+    case 'read':
+      doRead(s, txnId, op.key, time);
+      break;
+    case 'write':
+      doWrite(s, txnId, op.key, op.value, time);
+      break;
+    case 'ensure':
+      break; // Task 5
+    case 'commit':
+      doCommit(s, txnId, time);
+      break;
+    case 'abort':
+      doAbort(s, txnId, time, 'rolled back by the schedule');
+      break;
+  }
+}
+
+function runStep(s: TxnState, step: ScheduleStep, time: number): void {
+  const t = s.txns[step.txn];
+  // finished txns swallow their remaining ops — the schedule always runs to the end
+  if (t.status === 'committed' || t.status === 'aborted') {
+    s.skippedOps += 1;
+    return;
+  }
+  apply(s, step.txn, step.op, time);
+}
+
+export function applyStep(prev: TxnState, step: ScheduleStep, time: number): TxnState {
+  const s = structuredClone(prev);
+  runStep(s, step, time);
+  return s;
+}
+
+export const txn: SimModule<TxnState, TxnPayload> = {
+  id: 'txn-isolation',
+  chaos: [],
+
+  init(nodeId, config) {
+    return txnInit(nodeId as Level, config);
+  },
+
+  reduce(state, event) {
+    if (event.kind !== 'external') return [state, []];
+    const p = event.payload as TxnPayload | null;
+    if (!p || typeof p !== 'object' || !('schedule' in p)) return [state, []];
+    return [applyStep(state, p.schedule, event.time), []];
+  },
+
+  metrics(states): MetricSample[] {
+    const out: MetricSample[] = [];
+    for (const s of states.values()) {
+      const l = s.level.toLowerCase();
+      out.push({ name: `${l}/commits`, value: s.commits });
+      out.push({ name: `${l}/aborts`, value: s.aborts });
+      out.push({ name: `${l}/anomalies`, value: s.anomalies.length });
+    }
+    return out;
+  },
+
+  inspect(state) {
+    // minimal until Task 7
+    return { level: state.level, credo: CREDOS[state.level] } as unknown as InspectorTree;
+  },
+};
