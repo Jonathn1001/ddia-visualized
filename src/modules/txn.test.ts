@@ -217,3 +217,39 @@ test('SER: never dirty-reads, never loses the schedule tail', () => {
   expect(ser.store.counter.filter((v) => v.committedAt !== null).at(-1)?.value).toBe(12);
   expect(ser.anomalies).toEqual([]);
 });
+
+test('ensure: passes at/above the threshold, records its reads', () => {
+  const sim = fresh({ alice: 1, bob: 1 });
+  play(sim, [
+    { txn: 'T1', op: { op: 'begin' } },
+    { txn: 'T1', op: { op: 'ensure', keys: ['alice', 'bob'], atLeast: 2 } },
+  ]);
+  const rc = st(sim, 'RC');
+  expect(rc.txns.T1.status).toBe('active');
+  expect(rc.txns.T1.reads.map((r) => r.key)).toEqual(['alice', 'bob']);
+});
+
+test('ensure: below the threshold the txn aborts itself', () => {
+  const sim = fresh({ alice: 0, bob: 1 });
+  play(sim, [
+    { txn: 'T1', op: { op: 'begin' } },
+    { txn: 'T1', op: { op: 'ensure', keys: ['alice', 'bob'], atLeast: 2 } },
+    { txn: 'T1', op: { op: 'write', key: 'bob', value: 0 } },
+  ]);
+  const rc = st(sim, 'RC');
+  expect(rc.txns.T1.status).toBe('aborted');
+  expect(rc.txns.T1.abortReason).toContain('ensure failed');
+  expect(rc.skippedOps).toBe(1); // the write after the self-abort was swallowed
+  expect(rc.store.bob.at(-1)?.value).toBe(1);
+});
+
+test('{inc} with no prior read records the dependency read at write time', () => {
+  const sim = fresh({ counter: 10 });
+  play(sim, [
+    { txn: 'T1', op: { op: 'begin' } },
+    { txn: 'T1', op: { op: 'write', key: 'counter', value: { inc: 5 } } },
+  ]);
+  const rc = st(sim, 'RC');
+  expect(rc.store.counter.at(-1)?.value).toBe(15);
+  expect(rc.txns.T1.reads.map((r) => r.key)).toEqual(['counter']);
+});

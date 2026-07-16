@@ -167,6 +167,18 @@ function dropUncommitted(s: TxnState, txnId: TxnId): void {
   }
 }
 
+function doEnsure(s: TxnState, txnId: TxnId, keys: string[], atLeast: number, time: number): void {
+  const t = s.txns[txnId];
+  let sum = 0;
+  for (const key of keys) {
+    doRead(s, txnId, key, time);
+    sum += t.reads[t.reads.length - 1].value;
+  }
+  if (sum < atLeast) {
+    doAbort(s, txnId, time, `ensure failed: ${keys.join('+')}=${sum} < ${atLeast}`);
+  }
+}
+
 function doAbort(s: TxnState, txnId: TxnId, time: number, reason: string): void {
   const t = s.txns[txnId];
   dropUncommitted(s, txnId);
@@ -216,7 +228,8 @@ function apply(s: TxnState, txnId: TxnId, op: Op, time: number): void {
       doWrite(s, txnId, op.key, op.value, time);
       break;
     case 'ensure':
-      break; // Task 5
+      doEnsure(s, txnId, op.keys, op.atLeast, time);
+      break;
     case 'commit':
       doCommit(s, txnId, time);
       break;
