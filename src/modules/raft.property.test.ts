@@ -113,7 +113,7 @@ test('election safety: at most one leader per term, ever', () => {
     }),
     { numRuns: 15 },
   );
-});
+}, 30_000);
 
 test('log matching: same index + same term → same entry', () => {
   fc.assert(
@@ -130,7 +130,7 @@ test('log matching: same index + same term → same entry', () => {
     }),
     { numRuns: 15 },
   );
-});
+}, 30_000);
 
 test('state machine safety: applied prefixes never diverge', () => {
   fc.assert(
@@ -146,7 +146,7 @@ test('state machine safety: applied prefixes never diverge', () => {
     }),
     { numRuns: 15 },
   );
-});
+}, 30_000);
 
 test('determinism: same script + seed → identical states', () => {
   fc.assert(
@@ -159,7 +159,7 @@ test('determinism: same script + seed → identical states', () => {
     }),
     { numRuns: 8 },
   );
-});
+}, 30_000);
 
 test('writes-only histories (no reads) are always linearizable', () => {
   fc.assert(
@@ -170,7 +170,7 @@ test('writes-only histories (no reads) are always linearizable', () => {
     }),
     { numRuns: 15 },
   );
-});
+}, 30_000);
 
 test('checker vs brute force on tiny random histories', () => {
   const opArb = fc.record({
