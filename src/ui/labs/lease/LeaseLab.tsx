@@ -68,7 +68,12 @@ export function LeaseLab() {
         running={view.running}
         onPlayPause={() => (view.running ? driver.pause() : driver.start())}
         onStep={() => driver.stepOnce()}
-        onScrub={(i) => driver.scrubTo(i)}
+        onScrub={(i) => {
+          // forward only: recorder snapshots don't carry user externals, so a
+          // backward scrub would wipe the run while React-side challenge state
+          // (pauseBase/fencing) survives — a desync worth more than the feature
+          if (i >= view.processed) driver.scrubTo(i);
+        }}
       />
 
       <div className="flex flex-wrap items-start gap-4">
@@ -159,7 +164,7 @@ export function LeaseLab() {
         title="Challenge: the clock lies too"
         storageKeyPrefix="ddia:ch08:clock"
         prompt="Fencing off, no pause. Slow W1's clock (×0.5), acquire with both. Predict: can the store get corrupted with no GC pause at all?"
-        runningHint="🕰 W1 → W1 acquire → W2 acquire → play until the stale row appears."
+        runningHint="reset (new seed) first — this one must be pause-free and fencing-off. Then 🕰 W1 → W1 acquire → W2 acquire → play until the stale row appears."
         check={() => {
           if (pauseBase !== null || !skewFlag) return null; // this one must be pause-free
           const s = storeState();
