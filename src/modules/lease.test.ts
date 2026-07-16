@@ -230,3 +230,25 @@ test('pausing while paused extends the pause', () => {
   expect(w1.pausedUntil).not.toBeNull();
   expect(w1.pausedUntil as number).toBeGreaterThan(sim.time + 150);
 });
+
+test('a slow clock (rate 0.5) keeps the worker writing past true expiry → stale accepts, no pause involved', () => {
+  const sim = fresh();
+  sim.external(W1, { fault: 'clock-skew', rate: 0.5 });
+  sim.external(W1, { cmd: 'acquire' });
+  until(sim, () => workerOf(sim, W1).state === 'holding');
+  sim.external(W2, { cmd: 'acquire' });
+  // true expiry hands the lease to W2 while W1's slow clock still believes
+  until(sim, () => lockOf(sim).holder === W2, 4000);
+  until(sim, () => storeOf(sim).staleAccepts >= 1, 6000);
+  const stale = storeOf(sim).history.find((h) => h.outcome === 'stale');
+  expect(stale?.writer).toBe(W1);
+  expect(workerOf(sim, W1).pausedUntil).toBeNull(); // no pause was needed
+});
+
+test('an honest clock (rate 1) never produces a stale write on its own', () => {
+  const sim = fresh();
+  sim.external(W1, { cmd: 'acquire' });
+  sim.external(W2, { cmd: 'acquire' });
+  sim.runUntil(sim.time + LEASE_TTL * 4);
+  expect(storeOf(sim).staleAccepts).toBe(0);
+});

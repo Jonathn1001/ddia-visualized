@@ -85,8 +85,8 @@ function lockReduce(prev: LockState, ev: Ev): [LockState, Effect[]] {
       grantTo(s, ev.from, ev.time, fx);
     } else if (s.holder === ev.from) {
       // an acquire from the CURRENT holder means it no longer believes in its
-      // lease — release and re-serve (no 'expired' notice: they asked). The
-      // old expiry timer stays armed; its token guard makes it a no-op.
+      // lease — release and re-serve. The old expiry timer stays armed; its
+      // token guard makes it a no-op.
       s.holder = null;
       s.expiresAt = null;
       s.queue.push(ev.from); // fair: behind anyone already waiting
@@ -96,9 +96,16 @@ function lockReduce(prev: LockState, ev: Ev): [LockState, Effect[]] {
       s.queue.push(ev.from);
     }
   } else if (ev.kind === 'timer' && 't' in p && p.t === 'expiry') {
-    // only the CURRENT lease's timer may release; re-grants outdate old timers
+    // only the CURRENT lease's timer may release; re-grants outdate old timers.
+    // No 'expired' push to the old holder: a real lock service can't reliably
+    // notify a client of its own revocation (that's the whole premise of fig
+    // 8-3/8-4 — the client can only find out from its own clock, or from a
+    // fencing-token rejection at the store). A previous implementation sent an
+    // active push here; it always outran even the worst-case store write from
+    // the new holder (network latency [1,10] << grant-latency + WRITE_EVERY +
+    // WORK_TICKS + write-latency), which made a pure clock-skew stale write
+    // structurally impossible for any rate. See lease.test.ts's clock-skew tests.
     if (s.holder !== null && s.token === p.token) {
-      fx.push({ type: 'send', to: s.holder, payload: { kind: 'expired', token: s.token } });
       s.holder = null;
       s.expiresAt = null;
       const next = s.queue.shift();
@@ -143,6 +150,8 @@ function workerHandle(s: WorkerState, p: LeaseMsg | LeaseTimer, now: number, fx:
         }
         break; // grants with token ≤ current (duplicated/delayed) are ignored
       case 'expired':
+        // the Lock no longer sends this (see lockReduce's expiry-timer branch) —
+        // handler kept in case a future revision reintroduces a best-effort push.
         if (s.state === 'holding' && s.token === p.token) dropLease(s);
         break;
       case 'reject':
