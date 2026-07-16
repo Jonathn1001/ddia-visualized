@@ -70,8 +70,8 @@ reject.
 - when the work timer fires it **sends the write without re-checking** —
   `{write, token, value}` → Store — exactly the check-then-act window of DDIA
   fig 8-4 (and of Ch7's `ensure`, one chapter earlier);
-- when a local check fails, or an `expired` notice arrives, the worker returns to
-  `idle` and stops writing.
+- when a local check fails — or a fencing `reject` comes back — the worker returns
+  to `idle` and stops writing. Its own clock is its ONLY expiry signal.
 
 **GC pause** (`external {fault: 'gc-pause', ticks}` on a worker): sets
 `pausedUntil = now + ticks`. Any message or timer the worker receives while paused is
@@ -104,7 +104,7 @@ Constants: `LEASE_TTL = 60`, `WRITE_EVERY = 10`, `WORK_TICKS = 6`, defaults
 2. **Skew-based stale write.** No pause: W1's `rate 0.5` keeps its checks passing
    after true expiry → same corruption while W1's panel still shows "holding".
 3. **Playground chaos.** Drop/delay/duplicate sliders + partitions + kill: the
-   `expired` notice can be lost (worker learns only from its own clock), a
+   worker learns of expiry only from its own clock (there is no notice), a
    duplicated grant is harmless (same token), a partitioned worker's writes never
    arrive. All emergent from the engine — no special-casing.
 
