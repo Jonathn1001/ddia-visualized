@@ -11,8 +11,20 @@ type Cmd =
   | { at: number; revive: string }
   | { at: number; split: number } // partition: first `split` nodes vs the rest
   | { at: number; heal: true }
-  | { at: number; writeAt: string; value: number };
+  | { at: number; writeAt: string; value: number }
+  // leader-aware variants, resolved at EXECUTION time inside run() — fc
+  // arbitraries can't see sim state, but the interpreter can. These arm the
+  // generator with the shapes that actually produce truncation and lost writes:
+  // isolate whoever leads right now, write at whoever leads right now, and
+  // heal-then-write (settle the heal, then write at the surviving leader — that
+  // write is the conflicting entry that shears a deposed leader's dangling tail).
+  | { at: number; isolateLeader: true }
+  | { at: number; writeAtLeader: number }
+  | { at: number; healThenWriteAtLeader: number };
 
+// The leader-aware variants carry extra weight: uniform random almost never
+// produces the isolate → dangling write → conflicting write choreography
+// (a 600-run audit measured 0 truncations and 0 lost writes without them).
 const cmdArb: fc.Arbitrary<Cmd> = fc.oneof(
   fc.record({ at: fc.integer({ min: 0, max: 2000 }), kill: fc.constantFrom(...RAFT_NODES) }),
   fc.record({ at: fc.integer({ min: 0, max: 2000 }), revive: fc.constantFrom(...RAFT_NODES) }),
@@ -23,9 +35,12 @@ const cmdArb: fc.Arbitrary<Cmd> = fc.oneof(
     writeAt: fc.constantFrom(...RAFT_NODES),
     value: fc.integer({ min: 1, max: 99 }),
   }),
+  { arbitrary: fc.record({ at: fc.integer({ min: 0, max: 2000 }), isolateLeader: fc.constant(true as const) }), weight: 2 },
+  { arbitrary: fc.record({ at: fc.integer({ min: 0, max: 2000 }), writeAtLeader: fc.integer({ min: 1, max: 99 }) }), weight: 3 },
+  { arbitrary: fc.record({ at: fc.integer({ min: 0, max: 2000 }), healThenWriteAtLeader: fc.integer({ min: 1, max: 99 }) }), weight: 2 },
 );
 
-const script = fc.array(cmdArb, { minLength: 1, maxLength: 8 });
+const script = fc.array(cmdArb, { minLength: 1, maxLength: 10 });
 
 function run(cmds: Cmd[], seed: number) {
   const sim = new Simulation<RaftState, RaftPayload>({ module: raft, config: { nodeIds: RAFT_NODES }, seed });
@@ -60,6 +75,24 @@ function run(cmds: Cmd[], seed: number) {
       sim.control({ type: 'heal' });
     } else if ('writeAt' in c) {
       sim.external(c.writeAt, { cmd: 'write', value: c.value });
+    } else if ('isolateLeader' in c) {
+      const leader = RAFT_NODES.find((n) => sim.getState(n).role === 'leader');
+      if (leader) sim.control({ type: 'partition', groups: [[leader], RAFT_NODES.filter((n) => n !== leader)] });
+    } else if ('writeAtLeader' in c) {
+      const leader = RAFT_NODES.find((n) => sim.getState(n).role === 'leader');
+      if (leader) sim.external(leader, { cmd: 'write', value: c.writeAtLeader });
+    } else if ('healThenWriteAtLeader' in c) {
+      sim.control({ type: 'heal' });
+      // let the heal land and the cluster settle back to a single claimant —
+      // "the current leader" is only well-defined once a deposed leader has
+      // heard the real one's append and stepped down.
+      const oneLeader = () => RAFT_NODES.filter((n) => sim.getState(n).role === 'leader').length === 1;
+      for (let i = 0; i < 3000 && !oneLeader() && sim.pending > 0; i++) {
+        sim.runSteps(1);
+        snap();
+      }
+      const leader = RAFT_NODES.find((n) => sim.getState(n).role === 'leader');
+      if (leader) sim.external(leader, { cmd: 'write', value: c.healThenWriteAtLeader });
     }
   }
   sim.control({ type: 'heal' });
