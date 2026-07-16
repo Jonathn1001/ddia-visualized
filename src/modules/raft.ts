@@ -15,6 +15,7 @@ import {
   RAFT_NODES,
   type Entry,
   type HistoryRow,
+  type RaftExternal,
   type RaftMsg,
   type RaftPayload,
   type RaftTimer,
@@ -123,8 +124,12 @@ function becomeLeader(s: RaftState, fx: Effect[]): void {
   armHeartbeat(s, fx);
 }
 
-function handleTimer(s: RaftState, p: RaftTimer, rng: SeededRng, fx: Effect[]): void {
-  if (p.t === 'election') {
+function handleTimer(s: RaftState, p: RaftTimer, rng: SeededRng, now: number, fx: Effect[]): void {
+  if (p.t === 'client') {
+    // second phase of the client-op hop — invokedAt is the timer's fire time,
+    // strictly after anything that settled at the injection tick.
+    handleExternal(s, p.op, now, fx);
+  } else if (p.t === 'election') {
     if (p.nonce !== s.electionNonce || s.role === 'leader') return; // stale or irrelevant
     s.role = 'candidate';
     s.term += 1;
@@ -268,11 +273,17 @@ export const raft: SimModule<RaftState, RaftPayload> = {
     if (ev.kind === 'init') {
       armElection(s, rng, fx);
     } else if (ev.kind === 'timer' && 't' in (ev.payload as object)) {
-      handleTimer(s, ev.payload as RaftTimer, rng, fx);
+      handleTimer(s, ev.payload as RaftTimer, rng, ev.time, fx);
     } else if (ev.kind === 'message' && 'kind' in (ev.payload as object) && ev.from) {
       handleMsg(s, ev.payload as RaftMsg, ev.from, ev.time, rng, fx);
-    } else if (ev.kind === 'external') {
-      handleExternal(s, ev.payload, ev.time, fx);
+    } else if (ev.kind === 'external' && 'cmd' in (ev.payload as object)) {
+      // Client ops enter via a 1-tick timer hop, not directly: sim.external()
+      // schedules at the frozen sim.time, so an op injected the instant a prior
+      // op settled would share its tick and the linearizability checker would
+      // (correctly) treat the pair as concurrent — letting a stale read dodge
+      // the verdict. The hop gives every client op a strictly later invokedAt.
+      // No state change at injection.
+      fx.push({ type: 'timer', delay: 1, payload: { t: 'client', op: ev.payload as RaftExternal } });
     }
     return [s, fx];
   },

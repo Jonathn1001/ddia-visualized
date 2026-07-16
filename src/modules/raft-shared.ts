@@ -27,7 +27,13 @@ export type RaftMsg =
 
 export type RaftExternal = { cmd: 'write'; value: number } | { cmd: 'read' };
 
-export type RaftTimer = { t: 'election'; nonce: number } | { t: 'heartbeat'; nonce: number };
+export type RaftTimer =
+  | { t: 'election'; nonce: number }
+  | { t: 'heartbeat'; nonce: number }
+  /** Client-op hop: externals enter via a 1-tick timer so same-tick injections
+   *  get a strictly later invokedAt than anything that settled at injection time.
+   *  No nonce — client ops are never stale. */
+  | { t: 'client'; op: RaftExternal };
 
 export type RaftPayload = RaftMsg | RaftExternal | RaftTimer;
 
