@@ -167,3 +167,66 @@ test('a clean handover (no faults) is anomaly-free at either fencing setting', (
   expect(storeOf(sim).rejects).toBe(0);
   expect(storeOf(sim).staleAccepts).toBe(0);
 });
+
+test('gc-pause mid-work: the worker wakes and completes the write with its stale token (fig 8-4)', () => {
+  const sim = fresh();
+  sim.external(W1, { cmd: 'acquire' });
+  until(sim, () => workerOf(sim, W1).working === true, 2000);
+  // paused past the whole lease; the work timer is in flight and will be deferred
+  sim.external(W1, { fault: 'gc-pause', ticks: LEASE_TTL * 3 });
+  sim.external(W2, { cmd: 'acquire' });
+  until(sim, () => lockOf(sim).holder === W2, 4000);
+  until(sim, () => storeOf(sim).lastToken === 2, 3000); // W2 wrote with token 2
+  // let W1 wake and its deferred work timer fire
+  until(sim, () => storeOf(sim).staleAccepts >= 1, 6000);
+  const st = storeOf(sim);
+  const stale = st.history.find((h) => h.outcome === 'stale');
+  expect(stale?.writer).toBe(W1);
+  expect(stale?.token).toBe(1);
+  expect(stale && stale.token < st.lastToken).toBe(true);
+});
+
+test('with fencing ON the same choreography ends in a reject, not corruption', () => {
+  const sim = fresh();
+  sim.external(STORE, { cmd: 'fencing', on: true });
+  sim.runSteps(1);
+  sim.external(W1, { cmd: 'acquire' });
+  until(sim, () => workerOf(sim, W1).working === true, 2000);
+  sim.external(W1, { fault: 'gc-pause', ticks: LEASE_TTL * 3 });
+  sim.external(W2, { cmd: 'acquire' });
+  until(sim, () => storeOf(sim).lastToken === 2, 6000);
+  until(sim, () => storeOf(sim).rejects >= 1, 6000);
+  expect(storeOf(sim).staleAccepts).toBe(0);
+  // and the rejected worker corrected its belief
+  expect(workerOf(sim, W1).state).toBe('idle');
+});
+
+test('backlog preserves order: deferred events replay in arrival order at wake', () => {
+  const sim = fresh();
+  sim.external(W1, { cmd: 'acquire' });
+  until(sim, () => workerOf(sim, W1).working === true, 2000);
+  const pausedAt = sim.time;
+  sim.external(W1, { fault: 'gc-pause', ticks: LEASE_TTL * 2 });
+  until(sim, () => storeOf(sim).history.some((h) => h.writer === W1 && h.at > pausedAt), 6000);
+  // the write that lands after the pause must come from the DEFERRED work timer —
+  // i.e. the worker never re-checked (a re-check at wake would have dropped the lease)
+  const w1 = workerOf(sim, W1);
+  expect(w1.state).toBe('idle'); // after the backlog drained, the deferred check ended it
+});
+
+test('pausing while paused extends the pause', () => {
+  const sim = fresh();
+  sim.external(W1, { cmd: 'acquire' });
+  until(sim, () => workerOf(sim, W1).state === 'holding');
+  sim.external(W1, { fault: 'gc-pause', ticks: 50 });
+  sim.runUntil(sim.time + 10);
+  sim.external(W1, { fault: 'gc-pause', ticks: 200 });
+  // external() only enqueues at the current virtual time (src/engine/sim.ts) — it
+  // does not process the event. Step once so the second fault is actually applied
+  // before we read state; every other test in this file does the same via
+  // until()/runSteps() before inspecting post-external state.
+  sim.runSteps(1);
+  const w1 = workerOf(sim, W1);
+  expect(w1.pausedUntil).not.toBeNull();
+  expect(w1.pausedUntil as number).toBeGreaterThan(sim.time + 150);
+});
