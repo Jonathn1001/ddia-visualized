@@ -253,3 +253,86 @@ test('{inc} with no prior read records the dependency read at write time', () =>
   expect(rc.store.counter.at(-1)?.value).toBe(15);
   expect(rc.txns.T1.reads.map((r) => r.key)).toEqual(['counter']);
 });
+
+test('lost update: a committed overwrite based on a stale read is flagged (RC), not at SER', () => {
+  const sim = fresh({ counter: 10 });
+  play(sim, [
+    { txn: 'T1', op: { op: 'begin' } },
+    { txn: 'T2', op: { op: 'begin' } },
+    { txn: 'T1', op: { op: 'read', key: 'counter' } },
+    { txn: 'T2', op: { op: 'read', key: 'counter' } },
+    { txn: 'T1', op: { op: 'write', key: 'counter', value: { inc: 1 } } },
+    { txn: 'T1', op: { op: 'commit' } },
+    { txn: 'T2', op: { op: 'write', key: 'counter', value: { inc: 1 } } },
+    { txn: 'T2', op: { op: 'commit' } },
+  ]);
+  expect(st(sim, 'RC').anomalies.map((a) => a.type)).toEqual(['lost-update']);
+  expect(st(sim, 'RU').anomalies.map((a) => a.type)).toEqual(['lost-update']);
+  expect(st(sim, 'SER').anomalies).toEqual([]);
+});
+
+test('lost update: NOT flagged when the second writer read the first write (sequential updates)', () => {
+  const sim = fresh({ counter: 10 });
+  play(sim, [
+    { txn: 'T1', op: { op: 'begin' } },
+    { txn: 'T1', op: { op: 'write', key: 'counter', value: { inc: 1 } } },
+    { txn: 'T1', op: { op: 'commit' } },
+    { txn: 'T2', op: { op: 'begin' } },
+    { txn: 'T2', op: { op: 'read', key: 'counter' } },
+    { txn: 'T2', op: { op: 'write', key: 'counter', value: { inc: 1 } } },
+    { txn: 'T2', op: { op: 'commit' } },
+  ]);
+  expect(st(sim, 'RC').anomalies).toEqual([]);
+  expect(st(sim, 'RC').store.counter.filter((v) => v.committedAt !== null).at(-1)?.value).toBe(12);
+});
+
+test('write skew: disjoint writes over cross-read keys, both committed → flagged (RC and SI)', () => {
+  const sim = fresh({ alice: 1, bob: 1 });
+  play(sim, [
+    { txn: 'T1', op: { op: 'begin' } },
+    { txn: 'T2', op: { op: 'begin' } },
+    { txn: 'T1', op: { op: 'ensure', keys: ['alice', 'bob'], atLeast: 2 } },
+    { txn: 'T2', op: { op: 'ensure', keys: ['alice', 'bob'], atLeast: 2 } },
+    { txn: 'T1', op: { op: 'write', key: 'alice', value: 0 } },
+    { txn: 'T1', op: { op: 'commit' } },
+    { txn: 'T2', op: { op: 'write', key: 'bob', value: 0 } },
+    { txn: 'T2', op: { op: 'commit' } },
+  ]);
+  expect(st(sim, 'RC').anomalies.map((a) => a.type)).toEqual(['write-skew']);
+  expect(st(sim, 'SI').anomalies.map((a) => a.type)).toEqual(['write-skew']); // SI does NOT stop skew
+  const ser = st(sim, 'SER');
+  expect(ser.anomalies).toEqual([]);
+  expect(ser.txns.T2.status).toBe('aborted'); // its drained ensure saw alice already off call
+  expect(ser.txns.T2.abortReason).toContain('ensure failed');
+});
+
+test('write skew: NOT flagged for disjoint writes without cross-reads', () => {
+  const sim = fresh({ a: 1, b: 2 });
+  play(sim, [
+    { txn: 'T1', op: { op: 'begin' } },
+    { txn: 'T2', op: { op: 'begin' } },
+    { txn: 'T1', op: { op: 'write', key: 'a', value: 5 } },
+    { txn: 'T2', op: { op: 'write', key: 'b', value: 6 } },
+    { txn: 'T1', op: { op: 'commit' } },
+    { txn: 'T2', op: { op: 'commit' } },
+  ]);
+  expect(st(sim, 'RC').anomalies).toEqual([]);
+});
+
+test('write skew: NOT flagged when the txns did not overlap in time', () => {
+  const sim = fresh({ alice: 1, bob: 1 });
+  play(sim, [
+    { txn: 'T1', op: { op: 'begin' } },
+    { txn: 'T1', op: { op: 'ensure', keys: ['alice', 'bob'], atLeast: 2 } },
+    { txn: 'T1', op: { op: 'write', key: 'alice', value: 0 } },
+    { txn: 'T1', op: { op: 'commit' } },
+    { txn: 'T2', op: { op: 'begin' } },
+    { txn: 'T2', op: { op: 'ensure', keys: ['alice', 'bob'], atLeast: 2 } },
+    { txn: 'T2', op: { op: 'write', key: 'bob', value: 0 } },
+    { txn: 'T2', op: { op: 'commit' } },
+  ]);
+  // T2's ensure saw alice=0 and self-aborted at every level — and even if it had
+  // committed, the windows are disjoint, so no skew flag either way.
+  expect(st(sim, 'RC').anomalies).toEqual([]);
+  expect(st(sim, 'RC').txns.T2.abortReason).toContain('ensure failed');
+});

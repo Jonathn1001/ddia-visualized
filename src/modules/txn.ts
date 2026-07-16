@@ -123,7 +123,7 @@ function pickVersion(s: TxnState, reader: TxnId, key: string): Version | undefin
   return undefined;
 }
 
-function doRead(s: TxnState, txnId: TxnId, key: string, time: number): void {
+function doRead(s: TxnState, txnId: TxnId, key: string): void {
   const t = s.txns[txnId];
   const v = pickVersion(s, txnId, key);
   t.reads.push({
@@ -136,12 +136,12 @@ function doRead(s: TxnState, txnId: TxnId, key: string, time: number): void {
     s.anomalies.push({
       type: 'dirty-read',
       detail: `${txnId} read ${key}=${v.value} — uncommitted data from ${v.txn}`,
-      at: time,
+      at: s.clock,
     });
   }
 }
 
-function doWrite(s: TxnState, txnId: TxnId, key: string, value: WriteValue, time: number): void {
+function doWrite(s: TxnState, txnId: TxnId, key: string, value: WriteValue): void {
   const t = s.txns[txnId];
   let resolved: number;
   if (typeof value === 'number') {
@@ -153,7 +153,7 @@ function doWrite(s: TxnState, txnId: TxnId, key: string, value: WriteValue, time
     } else {
       // blind increment: read at write time and record the dependency,
       // so the lost-update detector still sees the read-modify-write shape
-      doRead(s, txnId, key, time);
+      doRead(s, txnId, key);
       resolved = t.reads[t.reads.length - 1].value + value.inc;
     }
   }
@@ -167,28 +167,80 @@ function dropUncommitted(s: TxnState, txnId: TxnId): void {
   }
 }
 
-function doEnsure(s: TxnState, txnId: TxnId, keys: string[], atLeast: number, time: number): void {
+function doEnsure(s: TxnState, txnId: TxnId, keys: string[], atLeast: number): void {
   const t = s.txns[txnId];
   let sum = 0;
   for (const key of keys) {
-    doRead(s, txnId, key, time);
+    doRead(s, txnId, key);
     sum += t.reads[t.reads.length - 1].value;
   }
   if (sum < atLeast) {
-    doAbort(s, txnId, time, `ensure failed: ${keys.join('+')}=${sum} < ${atLeast}`);
+    doAbort(s, txnId, `ensure failed: ${keys.join('+')}=${sum} < ${atLeast}`);
   }
 }
 
-function doAbort(s: TxnState, txnId: TxnId, time: number, reason: string): void {
+function doAbort(s: TxnState, txnId: TxnId, reason: string): void {
   const t = s.txns[txnId];
   dropUncommitted(s, txnId);
   t.status = 'aborted';
-  t.endedAt = time;
+  t.endedAt = s.clock;
   t.abortReason = reason;
   s.aborts += 1;
 }
 
-function doCommit(s: TxnState, txnId: TxnId, time: number): void {
+/**
+ * Lost update: this txn committed a write to a key it last read at a stale
+ * version — some other txn committed a newer version in between, and that
+ * update is now clobbered. Level-blind: it observes the actual history.
+ * Called after doCommit ticked and stamped the clock, so own versions carry
+ * committedAt === s.clock; a foreign commit that happened in between carries
+ * a strictly smaller stamp — `> readStamp && < s.clock` is exactly "committed
+ * after my read, before my commit".
+ */
+function detectLostUpdate(s: TxnState, txnId: TxnId): void {
+  const t = s.txns[txnId];
+  for (const key of t.writes) {
+    const lastRead = [...t.reads].reverse().find((r) => r.key === key);
+    if (!lastRead) continue; // blind write — not a read-modify-write clobber
+    const readStamp = lastRead.versionCommittedAt ?? -1;
+    const clobbered = (s.store[key] ?? []).some(
+      (v) => v.txn !== txnId && v.committedAt !== null && v.committedAt > readStamp && v.committedAt < s.clock,
+    );
+    if (clobbered) {
+      s.anomalies.push({
+        type: 'lost-update',
+        detail: `${txnId} overwrote ${key} from a stale read — a concurrent committed update vanished`,
+        at: s.clock,
+      });
+    }
+  }
+}
+
+/**
+ * Write skew: both txns committed, their active windows overlapped, they wrote
+ * DISJOINT key sets but each read a key the other wrote. The doctors shape.
+ */
+function detectWriteSkew(s: TxnState, me: TxnId): void {
+  const otherId: TxnId = me === 'T1' ? 'T2' : 'T1';
+  const a = s.txns[me];
+  const b = s.txns[otherId];
+  if (b.status !== 'committed') return;
+  if (a.writes.length === 0 || b.writes.length === 0) return;
+  if (a.writes.some((k) => b.writes.includes(k))) return; // overlapping writes → not skew
+  if (a.beganAt === null || b.beganAt === null || a.endedAt === null || b.endedAt === null) return;
+  if (!(a.beganAt < b.endedAt && b.beganAt < a.endedAt)) return; // windows must overlap
+  const aReadB = a.reads.some((r) => b.writes.includes(r.key));
+  const bReadA = b.reads.some((r) => a.writes.includes(r.key));
+  if (aReadB && bReadA) {
+    s.anomalies.push({
+      type: 'write-skew',
+      detail: `${me} and ${otherId} read each other's keys, wrote disjoint ones, both committed`,
+      at: s.clock,
+    });
+  }
+}
+
+function doCommit(s: TxnState, txnId: TxnId): void {
   const t = s.txns[txnId];
   if (s.level === 'SI') {
     const snap = t.snapshotAt ?? 0;
@@ -197,7 +249,7 @@ function doCommit(s: TxnState, txnId: TxnId, time: number): void {
         (v) => v.txn !== txnId && v.committedAt !== null && v.committedAt > snap,
       );
       if (conflict) {
-        doAbort(s, txnId, time, `write-write conflict on ${key} — first committer wins`);
+        doAbort(s, txnId, `write-write conflict on ${key} — first committer wins`);
         return;
       }
     }
@@ -207,34 +259,36 @@ function doCommit(s: TxnState, txnId: TxnId, time: number): void {
     for (const v of s.store[key]) if (v.txn === txnId && v.committedAt === null) v.committedAt = s.clock;
   }
   t.status = 'committed';
-  t.endedAt = time;
+  t.endedAt = s.clock;
   s.commits += 1;
+  detectLostUpdate(s, txnId);
+  detectWriteSkew(s, txnId);
 }
 
-function apply(s: TxnState, txnId: TxnId, op: Op, time: number): void {
+function apply(s: TxnState, txnId: TxnId, op: Op): void {
   const t = s.txns[txnId];
   switch (op.op) {
     case 'begin':
       s.clock += 1;
       t.status = 'active';
-      t.beganAt = time;
+      t.beganAt = s.clock;
       if (s.level === 'SI') t.snapshotAt = s.clock;
       if (s.level === 'SER') s.activeSer = txnId;
       break;
     case 'read':
-      doRead(s, txnId, op.key, time);
+      doRead(s, txnId, op.key);
       break;
     case 'write':
-      doWrite(s, txnId, op.key, op.value, time);
+      doWrite(s, txnId, op.key, op.value);
       break;
     case 'ensure':
-      doEnsure(s, txnId, op.keys, op.atLeast, time);
+      doEnsure(s, txnId, op.keys, op.atLeast);
       break;
     case 'commit':
-      doCommit(s, txnId, time);
+      doCommit(s, txnId);
       break;
     case 'abort':
-      doAbort(s, txnId, time, 'rolled back by the schedule');
+      doAbort(s, txnId, 'rolled back by the schedule');
       break;
   }
   if (s.level === 'SER' && s.activeSer === txnId && (t.status === 'committed' || t.status === 'aborted')) {
@@ -243,7 +297,7 @@ function apply(s: TxnState, txnId: TxnId, op: Op, time: number): void {
 }
 
 /** SER: replay parked steps once the engine frees up. Runs after every applied step. */
-function drainQueue(s: TxnState, time: number): void {
+function drainQueue(s: TxnState): void {
   while (s.queue.length > 0) {
     const head = s.queue[0];
     const ht = s.txns[head.txn];
@@ -254,11 +308,11 @@ function drainQueue(s: TxnState, time: number): void {
     }
     if (s.activeSer !== null && s.activeSer !== head.txn) return; // still blocked
     s.queue.shift();
-    apply(s, head.txn, head.op, time);
+    apply(s, head.txn, head.op);
   }
 }
 
-function runStep(s: TxnState, step: ScheduleStep, time: number): void {
+function runStep(s: TxnState, step: ScheduleStep): void {
   const t = s.txns[step.txn];
   // finished txns swallow their remaining ops — the schedule always runs to the end
   if (t.status === 'committed' || t.status === 'aborted') {
@@ -273,16 +327,16 @@ function runStep(s: TxnState, step: ScheduleStep, time: number): void {
       if (t.status === 'idle') t.status = 'waiting';
       return;
     }
-    apply(s, step.txn, step.op, time);
-    drainQueue(s, time);
+    apply(s, step.txn, step.op);
+    drainQueue(s);
     return;
   }
-  apply(s, step.txn, step.op, time);
+  apply(s, step.txn, step.op);
 }
 
-export function applyStep(prev: TxnState, step: ScheduleStep, time: number): TxnState {
+export function applyStep(prev: TxnState, step: ScheduleStep): TxnState {
   const s = structuredClone(prev);
-  runStep(s, step, time);
+  runStep(s, step);
   return s;
 }
 
@@ -298,7 +352,7 @@ export const txn: SimModule<TxnState, TxnPayload> = {
     if (event.kind !== 'external') return [state, []];
     const p = event.payload as TxnPayload | null;
     if (!p || typeof p !== 'object' || !('schedule' in p)) return [state, []];
-    return [applyStep(state, p.schedule, event.time), []];
+    return [applyStep(state, p.schedule), []];
   },
 
   metrics(states): MetricSample[] {
