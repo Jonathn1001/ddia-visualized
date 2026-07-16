@@ -2,8 +2,9 @@
 import { expect, test } from 'vitest';
 import { Simulation } from '../engine';
 import { SeededRng } from '../engine/rng';
-import { mergedHistory, raft, type RaftState } from './raft';
+import { completedOps, mergedHistory, raft, type RaftState } from './raft';
 import { ELECTION_MAX, RAFT_NODES, type HistoryRow, type RaftPayload } from './raft-shared';
+import { checkLinearizable } from './linearizable';
 
 export function fresh(seed = 9000) {
   const sim = new Simulation<RaftState, RaftPayload>({
@@ -236,4 +237,39 @@ test('logs converge: any two nodes agree at every index they share (after quiet 
       expect(s.log[i].seq).toBe(st(sim, l2).log[i].seq);
     }
   }
+});
+
+test('a deposed leader serves a stale read and the checker catches it', () => {
+  const sim = fresh(9013);
+  until(sim, () => leaders(sim).length === 1);
+  const old = leaders(sim)[0];
+  sim.external(old, { cmd: 'write', value: 1 });
+  until(sim, () => st(sim, old).commitIndex >= 1, 6000);
+  const others = RAFT_NODES.filter((n) => n !== old);
+  sim.control({ type: 'partition', groups: [[old], others] });
+  until(sim, () => others.some((n) => st(sim, n).role === 'leader'), 20000);
+  const neo = others.find((n) => st(sim, n).role === 'leader') as string;
+  sim.external(neo, { cmd: 'write', value: 2 });
+  until(sim, () => st(sim, neo).commitIndex >= 2, 8000);
+  // the old leader still believes; it serves its stale register.
+  // Nudge the clock one tick first: the `until` above stops on the very event
+  // that settles write(2), so respondedAt(write) == sim.time. Scheduling the
+  // read external right now would give it the same invokedAt, and the checker's
+  // real-time rule only orders ops on a strict respondedAt < invokedAt gap
+  // (rightly so — same-tick ops are genuinely concurrent). A one-tick idle
+  // advance gives the read a real happens-after relationship to the write.
+  sim.runUntil(sim.time + 1);
+  sim.external(old, { cmd: 'read' });
+  // runSteps(1) is not safe here: dozens of events already share sim.time (heartbeat
+  // retries against the partitioned peers) and sort ahead of the just-scheduled
+  // external by insertion order, so a single step can land on one of those instead.
+  // Gate on the read actually landing in old's history (was write-only before this).
+  until(sim, () => st(sim, old).history.some((h) => h.op === 'read'), 200);
+  const states = new Map(RAFT_NODES.map((n) => [n, st(sim, n)] as const));
+  const ops = completedOps(mergedHistory(states));
+  const verdict = checkLinearizable(ops);
+  expect(verdict.verdict).toBe('violation');
+  // and without the stale read the same history is fine
+  const clean = ops.filter((o) => !(o.op === 'read' && o.value === 1));
+  expect(checkLinearizable(clean).verdict).toBe('ok');
 });
