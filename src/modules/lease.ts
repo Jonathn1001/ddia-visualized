@@ -132,8 +132,16 @@ function workerHandle(s: WorkerState, p: LeaseMsg | LeaseTimer, now: number, fx:
           s.ttl = p.ttl;
           s.working = false;
           fx.push({ type: 'timer', delay: WRITE_EVERY, payload: { t: 'check' } });
+        } else if (s.state === 'holding' && p.token > (s.token ?? 0)) {
+          // the lock service re-served (e.g. it saw a duplicated acquire) —
+          // believe it: adopt the fresh lease in place. No new check timer:
+          // the live chain keeps running and reads the new fields.
+          s.token = p.token;
+          s.grantAt = now;
+          s.ttl = p.ttl;
+          s.working = false;
         }
-        break; // duplicate grants (network dup) are ignored — same token anyway
+        break; // grants with token ≤ current (duplicated/delayed) are ignored
       case 'expired':
         if (s.state === 'holding' && s.token === p.token) dropLease(s);
         break;

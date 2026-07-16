@@ -103,6 +103,18 @@ test('an acquire from the recorded holder releases and re-serves instead of vani
   expect(lockOf(sim).token).toBe(2);
 });
 
+test('a duplicated acquire cannot desync worker and lock tokens', () => {
+  const sim = fresh();
+  sim.control({ type: 'net', opts: { duplicateRate: 1 } });
+  sim.external(W1, { cmd: 'acquire' });
+  until(sim, () => workerOf(sim, W1).state === 'holding', 4000);
+  // let the duplicated acquire arrive and get re-served (token bumps to 2)…
+  until(sim, () => lockOf(sim).token === 2, 4000);
+  // …then the re-served grant must land: the worker adopts the higher token
+  until(sim, () => workerOf(sim, W1).token === lockOf(sim).token, 4000);
+  expect(lockOf(sim).holder).toBe(W1);
+});
+
 test('a stale reject (older token) cannot evict a fresh lease', () => {
   const sim = fresh();
   sim.external(W1, { cmd: 'acquire' });
