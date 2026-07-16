@@ -19,7 +19,11 @@ export function LeaseLab() {
   const [epoch, setEpoch] = useState(0);
   const [driver, setDriver] = useState<SimDriver<LeaseState> | null>(null);
   const [fencing, setFencing] = useState(false);
-  const [pausedFlag, setPausedFlag] = useState(false);
+  // Store counters snapshotted at the MOST RECENT pause click (null = no pause
+  // this epoch). Challenge wins compare against this base so a stale/reject
+  // earned before the pause (e.g. via clock-skew) can't bleed into the
+  // pause-choreography challenges.
+  const [pauseBase, setPauseBase] = useState<{ stale: number; rejects: number } | null>(null);
   const [skewFlag, setSkewFlag] = useState(false);
   const [staleAtFence, setStaleAtFence] = useState(0);
 
@@ -31,7 +35,7 @@ export function LeaseLab() {
     while (d.sim.pending > 0) d.stepOnce(); // drain inits so panels render immediately
     setDriver(d);
     setFencing(false);
-    setPausedFlag(false);
+    setPauseBase(null);
     setSkewFlag(false);
     setStaleAtFence(0);
     return () => d.pause();
@@ -79,7 +83,8 @@ export function LeaseLab() {
         onAcquire={(w) => driver.external(w, { cmd: 'acquire' })}
         onPause={(w, ticks) => {
           driver.external(w, { fault: 'gc-pause', ticks });
-          setPausedFlag(true);
+          // every pause click re-snapshots the store counters at pause time
+          setPauseBase({ stale: storeState().staleAccepts, rejects: storeState().rejects });
         }}
         onSkew={(w, rate) => {
           driver.external(w, { fault: 'clock-skew', rate });
@@ -105,9 +110,10 @@ export function LeaseLab() {
         prompt="Fencing off. Acquire with W1, GC-pause it mid-work (⚙) past the TTL, let W2 take over. Predict: what does W1 do when it wakes?"
         runningHint="W1 acquire → wait for ⚙ working → ⏸ W1 → W2 acquire → play."
         check={() => {
-          if (!pausedFlag) return null; // no auto-win without an actual pause (Ch3 lesson)
+          if (pauseBase === null) return null; // no auto-win without an actual pause (Ch3 lesson)
           const s = storeState();
-          return s.staleAccepts >= 1 ? { stale: s.staleAccepts } : null;
+          // a stale accept that happened AFTER the most recent pause
+          return s.staleAccepts > pauseBase.stale ? { stale: s.staleAccepts } : null;
         }}
         onWin={() => driver.pause()}
         renderWin={(_w, prediction) => (
@@ -128,9 +134,13 @@ export function LeaseLab() {
         prompt="Same choreography, fencing ON first. Predict: what happens to W1's wake-up write?"
         runningHint="fencing: on → W1 acquire → ⚙ → ⏸ W1 → W2 acquire → play."
         check={() => {
-          if (!fencing || !pausedFlag) return null;
+          if (!fencing || pauseBase === null) return null;
           const s = storeState();
-          return s.rejects >= 1 && s.staleAccepts <= staleAtFence ? { rejects: s.rejects } : null;
+          // a rejection that happened AFTER the most recent pause, with no
+          // stale accept slipping through since fencing was enabled
+          return s.rejects > pauseBase.rejects && s.staleAccepts <= staleAtFence
+            ? { rejects: s.rejects }
+            : null;
         }}
         onWin={() => driver.pause()}
         renderWin={(_w, prediction) => (
@@ -151,7 +161,7 @@ export function LeaseLab() {
         prompt="Fencing off, no pause. Slow W1's clock (×0.5), acquire with both. Predict: can the store get corrupted with no GC pause at all?"
         runningHint="🕰 W1 → W1 acquire → W2 acquire → play until the stale row appears."
         check={() => {
-          if (pausedFlag || !skewFlag) return null; // this one must be pause-free
+          if (pauseBase !== null || !skewFlag) return null; // this one must be pause-free
           const s = storeState();
           const w1 = workerState(W1);
           return s.staleAccepts >= 1 && w1.rate !== 1 ? { stale: s.staleAccepts } : null;
