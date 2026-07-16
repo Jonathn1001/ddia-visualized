@@ -163,7 +163,7 @@ The chaos vocabulary splits into two families: **network chaos** (kill node, par
 
 **Phase 3 — Distributed core: Chapters 6, 8, 9 (4–6 weeks).** Partitioning ring → unreliable network → Raft + linearizability checker. The hardest and most valuable cluster.
 
-**Phase 4 — Transactions: Chapter 7 (2–3 weeks).** The isolation anomaly lab with the drag-and-drop timeline.
+**Phase 4 — Transactions: Chapter 7 (2–3 weeks).** The isolation anomaly lab with the drag-and-drop timeline. *(shipped 2026-07-16 — 7.1 four-level lockstep panels [RU/RC/SI/SER-serial] over three preset anomaly schedules + 7.d debrief; the write-skew-under-SI win condition is met via the doctors preset. Deviation: drag-and-drop free-form scheduling deferred — presets + step-through ship the same lesson at a fraction of the surface; see the Ch7 spec §1 Out.)*
 
 **Phase 5 — Data flow: Chapters 10, 11, 12 + Chapters 1, 2, 4 (4 weeks).** Finish with the "unbundled database" lab composing everything together.
 

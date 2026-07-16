@@ -16,6 +16,8 @@ import { ApiLab } from './labs/api/ApiLab';
 import { ApiDebrief } from './labs/api/Debrief';
 import { StorageLab } from './labs/storage/StorageLab';
 import { StorageDebrief } from './labs/storage/Debrief';
+import { TxnLab } from './labs/txn/TxnLab';
+import { TxnDebrief } from './labs/txn/Debrief';
 
 interface Page {
   eyebrow: string;
@@ -87,6 +89,20 @@ const PAGES: Record<string, Omit<Page, 'body'> & { Component: () => ReactNode }>
     thesis:
       'The minimal-migration property you just used, the vnode dial real systems ship, and the hot key no partitioner can fix.',
     Component: HashRingDebrief,
+  },
+  '7.1': {
+    eyebrow: 'Chapter 7 — Transactions',
+    title: 'Isolation Anomaly Lab',
+    thesis:
+      'The same two-transaction schedule replays under four isolation levels at once. Watch a dirty read die at Read Committed, a lost update die at Snapshot Isolation, and write skew — the doctors-on-call problem — survive everything but serial execution.',
+    Component: TxnLab,
+  },
+  '7.d': {
+    eyebrow: 'Chapter 7 — Debrief',
+    title: 'The isolation ladder',
+    thesis:
+      'Each level buys off exactly one class of race, and each rung costs more — aborts, queueing, throughput. Why "use transactions" is the start of the conversation, not the end.',
+    Component: TxnDebrief,
   },
   '11.1': {
     eyebrow: 'Chapter 11 — Stream Processing',

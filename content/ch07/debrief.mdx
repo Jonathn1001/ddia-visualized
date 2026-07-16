@@ -1,0 +1,48 @@
+# Chapter 7 — Transactions: Debrief
+
+## One schedule, four verdicts
+
+You replayed the exact same interleaving of two transactions under four isolation levels
+and got four different histories. Nothing about the schedule changed — only the rules for
+what a read may see and what a commit must check.
+
+## The ladder you climbed
+
+**Read Uncommitted** let T2 read a value T1 later rolled back — a **dirty read**: acting
+on data that, officially, never existed.
+
+**Read Committed** refuses to serve unfinished writes. But both increments still read the
+same starting value and the second commit silently clobbered the first — a **lost
+update**. Seeing only committed data is not the same as seeing *current* data.
+
+**Snapshot Isolation** gives every transaction a frozen, consistent view, and aborts the
+second writer of the same key (*first committer wins*) — the lost update became an
+explicit abort. But when two doctors each checked the rota and went off call, SI saw no
+conflict: the writes touched *different* keys. **Write skew** is the anomaly a snapshot
+cannot see, because the problem lives in what was *read*, not what was written.
+
+**Serializable** (here: actual serial execution, one transaction at a time) ends the
+argument. T2's re-check ran after T1 finished, saw one doctor left, and refused. The
+price was waiting — you watched T2's ops queue up. Serializability always costs
+something: throughput, aborts, or latency.
+
+## What real databases do
+
+Real engines rarely run serially (though Redis and VoltDB do). PostgreSQL's
+`SERIALIZABLE` uses **SSI** — it lets snapshot transactions run and aborts the ones whose
+read/write dependencies form a dangerous cycle. The older road is **two-phase locking**:
+reads block writers, writers block readers, and write skew dies as a deadlock instead.
+Also worth knowing: in PostgreSQL, `REPEATABLE READ` *is* snapshot isolation — and the
+default is `READ COMMITTED`, one rung below the level that stops a lost update.
+
+## The takeaway
+
+"Use transactions" is where the conversation starts, not where it ends. Ask: which
+anomaly can my access pattern produce, and which is the *weakest* (cheapest) level that
+provably blocks it? You now have the lab to answer that by experiment.
+
+## Terms
+
+*dirty read* · *lost update* · *write skew* · *read committed* · *snapshot isolation
+(MVCC)* · *first committer wins* · *serializable* · *serial execution* · *two-phase
+locking (2PL)* · *SSI* — the transaction vocabulary of DDIA Ch7.
