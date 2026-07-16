@@ -63,6 +63,15 @@ export interface TxnState {
   aborts: number;
   queuedOps: number;
   skippedOps: number;
+  /**
+   * Monotonic per-node logical clock, ticked on begin/commit only.
+   * The harness's virtual `time` is the same instant for every step of a
+   * schedule (this module emits no timer/message effects, so the sim clock
+   * never advances on its own) — SI's begin/commit ordering needs a signal
+   * that actually varies, so `snapshotAt`/`committedAt` are stamped from
+   * this instead of the (degenerate) `time` parameter.
+   */
+  clock: number;
 }
 
 const freshTxn = (): TxnInfo => ({
@@ -90,6 +99,7 @@ export function txnInit(level: Level, config: ModuleConfig): TxnState {
     aborts: 0,
     queuedOps: 0,
     skippedOps: 0,
+    clock: 0,
   };
 }
 
@@ -168,8 +178,21 @@ function doAbort(s: TxnState, txnId: TxnId, time: number, reason: string): void 
 
 function doCommit(s: TxnState, txnId: TxnId, time: number): void {
   const t = s.txns[txnId];
+  if (s.level === 'SI') {
+    const snap = t.snapshotAt ?? 0;
+    for (const key of t.writes) {
+      const conflict = (s.store[key] ?? []).some(
+        (v) => v.txn !== txnId && v.committedAt !== null && v.committedAt > snap,
+      );
+      if (conflict) {
+        doAbort(s, txnId, time, `write-write conflict on ${key} — first committer wins`);
+        return;
+      }
+    }
+  }
+  s.clock += 1;
   for (const key of Object.keys(s.store)) {
-    for (const v of s.store[key]) if (v.txn === txnId && v.committedAt === null) v.committedAt = time;
+    for (const v of s.store[key]) if (v.txn === txnId && v.committedAt === null) v.committedAt = s.clock;
   }
   t.status = 'committed';
   t.endedAt = time;
@@ -180,9 +203,10 @@ function apply(s: TxnState, txnId: TxnId, op: Op, time: number): void {
   const t = s.txns[txnId];
   switch (op.op) {
     case 'begin':
+      s.clock += 1;
       t.status = 'active';
       t.beganAt = time;
-      if (s.level === 'SI') t.snapshotAt = time;
+      if (s.level === 'SI') t.snapshotAt = s.clock;
       break;
     case 'read':
       doRead(s, txnId, op.key, time);

@@ -112,3 +112,50 @@ test('reduce ignores non-schedule payloads and non-external events', () => {
   expect(st(sim, 'RC').skippedOps).toBe(0);
   expect(st(sim, 'RC').store.x).toHaveLength(1);
 });
+
+test('SI: reads are stable against commits after the snapshot', () => {
+  const sim = fresh({ x: 10 });
+  play(sim, [
+    { txn: 'T2', op: { op: 'begin' } },
+    { txn: 'T1', op: { op: 'begin' } },
+    { txn: 'T1', op: { op: 'write', key: 'x', value: 42 } },
+    { txn: 'T1', op: { op: 'commit' } },
+    { txn: 'T2', op: { op: 'read', key: 'x' } },
+  ]);
+  expect(st(sim, 'SI').txns.T2.reads[0].value).toBe(10); // snapshot predates T1's commit
+  expect(st(sim, 'RC').txns.T2.reads[0].value).toBe(42); // RC sees the newest committed
+});
+
+test('SI: first committer wins — the second writer of the same key aborts', () => {
+  const sim = fresh({ counter: 10 });
+  play(sim, [
+    { txn: 'T1', op: { op: 'begin' } },
+    { txn: 'T2', op: { op: 'begin' } },
+    { txn: 'T1', op: { op: 'write', key: 'counter', value: 11 } },
+    { txn: 'T2', op: { op: 'write', key: 'counter', value: 17 } },
+    { txn: 'T1', op: { op: 'commit' } },
+    { txn: 'T2', op: { op: 'commit' } },
+  ]);
+  const si = st(sim, 'SI');
+  expect(si.txns.T1.status).toBe('committed');
+  expect(si.txns.T2.status).toBe('aborted');
+  expect(si.txns.T2.abortReason).toContain('first committer wins');
+  // the loser's version is gone; the winner's value stands
+  expect(si.store.counter.filter((v) => v.committedAt !== null).at(-1)?.value).toBe(11);
+  // RC (no conflict check) let both commit
+  expect(st(sim, 'RC').txns.T2.status).toBe('committed');
+});
+
+test('SI: disjoint writes both commit (no false conflict)', () => {
+  const sim = fresh({ a: 1, b: 2 });
+  play(sim, [
+    { txn: 'T1', op: { op: 'begin' } },
+    { txn: 'T2', op: { op: 'begin' } },
+    { txn: 'T1', op: { op: 'write', key: 'a', value: 5 } },
+    { txn: 'T2', op: { op: 'write', key: 'b', value: 6 } },
+    { txn: 'T1', op: { op: 'commit' } },
+    { txn: 'T2', op: { op: 'commit' } },
+  ]);
+  expect(st(sim, 'SI').txns.T1.status).toBe('committed');
+  expect(st(sim, 'SI').txns.T2.status).toBe('committed');
+});
