@@ -159,3 +159,61 @@ test('SI: disjoint writes both commit (no false conflict)', () => {
   expect(st(sim, 'SI').txns.T1.status).toBe('committed');
   expect(st(sim, 'SI').txns.T2.status).toBe('committed');
 });
+
+test('SER: a second txn queues while the first is active, then drains on commit', () => {
+  const sim = fresh({ x: 10 });
+  play(sim, [
+    { txn: 'T1', op: { op: 'begin' } },
+    { txn: 'T2', op: { op: 'begin' } },
+    { txn: 'T2', op: { op: 'read', key: 'x' } },
+    { txn: 'T1', op: { op: 'write', key: 'x', value: 42 } },
+  ]);
+  let ser = st(sim, 'SER');
+  expect(ser.txns.T2.status).toBe('waiting');
+  expect(ser.queue).toHaveLength(2);
+  expect(ser.queuedOps).toBe(2);
+  expect(ser.txns.T2.reads).toEqual([]); // nothing ran yet
+
+  play(sim, [{ txn: 'T1', op: { op: 'commit' } }]);
+  ser = st(sim, 'SER');
+  expect(ser.queue).toEqual([]);
+  expect(ser.txns.T2.status).toBe('active');
+  // the drained read ran AFTER T1's commit, so it saw 42 — serial order, not schedule order
+  expect(ser.txns.T2.reads[0].value).toBe(42);
+});
+
+test('SER: drains on abort too, and the drained txn sees pre-abort state', () => {
+  const sim = fresh({ x: 10 });
+  play(sim, [
+    { txn: 'T1', op: { op: 'begin' } },
+    { txn: 'T1', op: { op: 'write', key: 'x', value: 99 } },
+    { txn: 'T2', op: { op: 'begin' } },
+    { txn: 'T2', op: { op: 'read', key: 'x' } },
+    { txn: 'T2', op: { op: 'commit' } },
+    { txn: 'T1', op: { op: 'abort' } },
+  ]);
+  const ser = st(sim, 'SER');
+  expect(ser.txns.T2.status).toBe('committed');
+  expect(ser.txns.T2.reads[0].value).toBe(10); // T1's write was rolled back first
+  expect(ser.anomalies).toEqual([]);
+});
+
+test('SER: never dirty-reads, never loses the schedule tail', () => {
+  const sim = fresh({ counter: 10 });
+  play(sim, [
+    { txn: 'T1', op: { op: 'begin' } },
+    { txn: 'T2', op: { op: 'begin' } },
+    { txn: 'T1', op: { op: 'read', key: 'counter' } },
+    { txn: 'T2', op: { op: 'read', key: 'counter' } },
+    { txn: 'T1', op: { op: 'write', key: 'counter', value: { inc: 1 } } },
+    { txn: 'T1', op: { op: 'commit' } },
+    { txn: 'T2', op: { op: 'write', key: 'counter', value: { inc: 1 } } },
+    { txn: 'T2', op: { op: 'commit' } },
+  ]);
+  const ser = st(sim, 'SER');
+  expect(ser.txns.T1.status).toBe('committed');
+  expect(ser.txns.T2.status).toBe('committed');
+  // both increments landed: T2 ran serially after T1
+  expect(ser.store.counter.filter((v) => v.committedAt !== null).at(-1)?.value).toBe(12);
+  expect(ser.anomalies).toEqual([]);
+});

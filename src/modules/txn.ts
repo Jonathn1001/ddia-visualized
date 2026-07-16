@@ -207,6 +207,7 @@ function apply(s: TxnState, txnId: TxnId, op: Op, time: number): void {
       t.status = 'active';
       t.beganAt = time;
       if (s.level === 'SI') t.snapshotAt = s.clock;
+      if (s.level === 'SER') s.activeSer = txnId;
       break;
     case 'read':
       doRead(s, txnId, op.key, time);
@@ -223,6 +224,25 @@ function apply(s: TxnState, txnId: TxnId, op: Op, time: number): void {
       doAbort(s, txnId, time, 'rolled back by the schedule');
       break;
   }
+  if (s.level === 'SER' && s.activeSer === txnId && (t.status === 'committed' || t.status === 'aborted')) {
+    s.activeSer = null;
+  }
+}
+
+/** SER: replay parked steps once the engine frees up. Runs after every applied step. */
+function drainQueue(s: TxnState, time: number): void {
+  while (s.queue.length > 0) {
+    const head = s.queue[0];
+    const ht = s.txns[head.txn];
+    if (ht.status === 'committed' || ht.status === 'aborted') {
+      s.queue.shift();
+      s.skippedOps += 1;
+      continue;
+    }
+    if (s.activeSer !== null && s.activeSer !== head.txn) return; // still blocked
+    s.queue.shift();
+    apply(s, head.txn, head.op, time);
+  }
 }
 
 function runStep(s: TxnState, step: ScheduleStep, time: number): void {
@@ -230,6 +250,18 @@ function runStep(s: TxnState, step: ScheduleStep, time: number): void {
   // finished txns swallow their remaining ops — the schedule always runs to the end
   if (t.status === 'committed' || t.status === 'aborted') {
     s.skippedOps += 1;
+    return;
+  }
+  if (s.level === 'SER') {
+    const admissible = s.activeSer === step.txn || (s.activeSer === null && step.op.op === 'begin');
+    if (!admissible) {
+      s.queue.push(step);
+      s.queuedOps += 1;
+      if (t.status === 'idle') t.status = 'waiting';
+      return;
+    }
+    apply(s, step.txn, step.op, time);
+    drainQueue(s, time);
     return;
   }
   apply(s, step.txn, step.op, time);
