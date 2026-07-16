@@ -108,7 +108,7 @@ export function LeaseLab() {
         title="Challenge: the lease is a lie"
         storageKeyPrefix="ddia:ch08:lease"
         prompt="Fencing off. Acquire with W1, GC-pause it mid-work (⚙) past the TTL, let W2 take over. Predict: what does W1 do when it wakes?"
-        runningHint="W1 acquire → wait for ⚙ working → ⏸ W1 → W2 acquire → play."
+        runningHint="W1 acquire → click step until ⚙ working shows → ⏸ W1 → W2 acquire → play (or keep stepping). Play mode is too fast to catch the window — the step button is your freeze-frame."
         check={() => {
           if (pauseBase === null) return null; // no auto-win without an actual pause (Ch3 lesson)
           const s = storeState();
@@ -132,7 +132,7 @@ export function LeaseLab() {
         title="Challenge: fence it"
         storageKeyPrefix="ddia:ch08:fence"
         prompt="Same choreography, fencing ON first. Predict: what happens to W1's wake-up write?"
-        runningHint="fencing: on → W1 acquire → ⚙ → ⏸ W1 → W2 acquire → play."
+        runningHint="fencing: on → W1 acquire → step until ⚙ working → ⏸ W1 → W2 acquire → play (or keep stepping)."
         check={() => {
           if (!fencing || pauseBase === null) return null;
           const s = storeState();
