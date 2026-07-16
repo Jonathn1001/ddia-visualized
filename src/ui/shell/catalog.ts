@@ -97,7 +97,10 @@ export const CATALOG: Chapter[] = [
   {
     id: 'ch9',
     title: 'Ch.9 — Consistency & Consensus',
-    labs: [{ id: '9.1', label: 'Raft + Linearizability Checker', status: 'soon' }],
+    labs: [
+      { id: '9.1', label: 'Raft + Linearizability Checker', status: 'active' },
+      { id: '9.d', label: 'Debrief & Journal', status: 'active' },
+    ],
   },
   {
     id: 'ch10',

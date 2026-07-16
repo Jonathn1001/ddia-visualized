@@ -20,6 +20,8 @@ import { TxnLab } from './labs/txn/TxnLab';
 import { TxnDebrief } from './labs/txn/Debrief';
 import { LeaseLab } from './labs/lease/LeaseLab';
 import { LeaseDebrief } from './labs/lease/Debrief';
+import { RaftLab } from './labs/raft/RaftLab';
+import { RaftDebrief } from './labs/raft/Debrief';
 
 interface Page {
   eyebrow: string;
@@ -119,6 +121,20 @@ const PAGES: Record<string, Omit<Page, 'body'> & { Component: () => ReactNode }>
     thesis:
       'Partial failure, process pauses, and untrustworthy clocks — why the check must travel with the act, and what a fencing token actually buys.',
     Component: LeaseDebrief,
+  },
+  '9.1': {
+    eyebrow: 'Chapter 9 — Consistency & Consensus',
+    title: 'Raft + Linearizability Checker',
+    thesis:
+      'Five nodes, one log. Elect, replicate, partition — the minority goes mute instead of wrong. Then catch a deposed leader lying to a client and prove it with a linearizability checker.',
+    Component: RaftLab,
+  },
+  '9.d': {
+    eyebrow: 'Chapter 9 — Debrief',
+    title: 'The art of the majority',
+    thesis:
+      'Consensus is the art of the majority; linearizability is the promise your reads keep. What the checker saw, and the tricks real systems use to read fast without lying.',
+    Component: RaftDebrief,
   },
   '11.1': {
     eyebrow: 'Chapter 11 — Stream Processing',

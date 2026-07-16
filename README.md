@@ -10,7 +10,7 @@ Design: [`docs/DESIGN_PLAN.en.md`](docs/DESIGN_PLAN.en.md) (canonical; Vietnames
 
 ## Status
 
-**Seven chapters live — fourteen interactive labs.**
+**Eight chapters live — fifteen interactive labs.**
 
 **Ch.3 — Storage Engines:**
 - **3.1 LSM-Tree vs B-Tree** — the same keys drive both engines side-by-side; memtable → SSTable flush → compaction with bloom filters next to a page-splitting B-tree, and a write/read/space amplification scoreboard. Challenges: *crash mid-write — what does the WAL save?*, *disk-full — compaction stalls vs the split is refused*, *torn write — detect the corruption*.
@@ -33,6 +33,9 @@ Design: [`docs/DESIGN_PLAN.en.md`](docs/DESIGN_PLAN.en.md) (canonical; Vietnames
 
 **Ch.8 — The Trouble with Distributed Systems:**
 - **8.1 Unreliable Network Playground** — a lease lock service, two check-then-act workers and a shared store over a genuinely unreliable network (latency/drop/duplicate/partition sliders). Challenges: *the lease is a lie (GC-pause the holder — DDIA fig 8-4)*, *fence it (same failure, fencing tokens on)*, *the clock lies too (corruption via a slow clock, no pause at all)*.
+
+**Ch.9 — Consistency & Consensus:**
+- **9.1 Raft + Linearizability Checker** — a five-node Raft cluster: randomized-timeout elections, log replication, the §5.4.2 commit restriction, and a client history table feeding a Wing–Gong linearizability checker. Challenges: *the minority cannot decide (partition the leader — its write hangs pending)*, *heal and repent (the dangling write is truncated away, logs converge)*, *catch the stale read (a deposed leader answers from the past — the checker proves the violation)*.
 
 **Ch.11 — Stream Processing** (three standalone broker flows; same workload, three delivery fates):
 - **11.1 Kafka Log** — replayable log, offset commits, session-timeout replay. Challenge: *make the group process a message twice*.

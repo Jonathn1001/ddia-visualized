@@ -1,0 +1,70 @@
+# Chapter 9 — Consistency & Consensus: Debrief
+
+## The minority's silence IS the safety
+
+When you partitioned the leader away, its side did not fail loudly — it went mute. The
+write you issued there sat `pending` forever: with one vote out of five, the old leader
+could never commit it. That silence is the entire safety argument. A value is decided
+only when a majority holds it, and any two majorities overlap in at least one node — so
+the two sides of a partition can never decide differently. The minority pays in
+availability; in exchange, nothing it says can ever be wrong.
+
+## Terms are fencing tokens
+
+Ch8's fencing token came back wearing a new name. Every election increments the term,
+every message carries it, and any node that hears a higher term steps down on the spot.
+The deposed leader that answered your read was already fenced by the majority's new
+term — its tragedy was answering the client *before hearing about it*. Same monotonic
+number, same job: make stale authority provably stale.
+
+## The one subtle rule: §5.4.2
+
+A Raft leader only counts replication of entries *from its own term* toward commitment;
+older entries commit implicitly when a current-term entry commits on top of them.
+Without this restriction, a new leader could "commit" an old-term entry that a later
+leader is still entitled to overwrite — and a committed entry must never be overwritten.
+Your heal-and-repent challenge walked the edge of this rule: the isolated leader's
+dangling write was never committed, so when it rejoined and its log conflicted with the
+new leader's, truncating that tail away was legal. Lost, not corrupted — the client saw
+`lost`, never a false `ok`.
+
+## Linearizability, as the checker sees it
+
+A history is linearizable if there exists one total order of its operations that (a)
+respects real time — an operation that finished before another began must come first —
+and (b) reads like a single register: every read returns the latest write before it.
+The checker you clicked is a Wing–Gong search: it tries every seating order consistent
+with real-time precedence (memoized, capped at 12 ops — the problem is NP-complete).
+Your stale read broke clause (b) in every possible order: the new leader's write had
+completed *before* your read began, yet the read returned the old value. No seating
+exists; verdict `violation`; the culprit row is the read that cannot be seated.
+
+## Reading fast without lying
+
+The stale read happened because the old leader answered from local state without
+checking it was still leader. The fix menu real systems pick from: **read-index** — the
+leader confirms leadership with one heartbeat round before answering (one network round
+trip, no log write); **lease reads** — the leader answers freely inside a clock-bounded
+lease (fast, but now you trust clocks again — hello, Ch8); **quorum reads** — ask a
+majority and take the freshest answer (always safe, always expensive).
+
+## What was cut
+
+Real Raft also ships **log compaction / snapshots** (the log cannot grow forever),
+**membership change** (joint consensus for adding/removing nodes), and **PreVote** (a
+rejoining node probes before incrementing terms, so a flapping node cannot depose a
+healthy leader). None change the safety story you just drove.
+
+## Real systems
+
+**etcd** runs this exact protocol — read-index reads by default. **ZooKeeper** runs ZAB,
+a sibling: same epochs-as-terms, same majority commit. **Spanner** runs Paxos per shard
+with TrueTime-bounded lease reads — Google's answer to "lease reads, but the clock
+uncertainty is measured, not assumed."
+
+## Terms
+
+*consensus* · *quorum / majority overlap* · *term (epoch)* · *leader election* ·
+*split vote / randomized timeout* · *log replication* · *commit index* ·
+*log matching property* · *§5.4.2 commit restriction* · *linearizability* ·
+*stale read* · *read-index / lease read / quorum read* — the vocabulary of DDIA Ch9.
