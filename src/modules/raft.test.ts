@@ -290,3 +290,21 @@ test('a stale read injected at the exact settle tick is still caught (client-op 
   const ops = completedOps(mergedHistory(states));
   expect(checkLinearizable(ops).verdict).toBe('violation');
 });
+
+test('inspect exposes the per-node panel contract', () => {
+  const sim = fresh();
+  until(sim, () => leaders(sim).length === 1);
+  const lead = leaders(sim)[0];
+  const i = raft.inspect(st(sim, lead)) as unknown as { role: string; term: number; log: unknown[]; commitIndex: number };
+  expect(i.role).toBe('leader');
+  expect(i.term).toBeGreaterThanOrEqual(1);
+  expect(Array.isArray(i.log)).toBe(true);
+});
+
+test('metrics: leader count, max term, committed, per-node log length', () => {
+  const sim = fresh();
+  until(sim, () => leaders(sim).length === 1);
+  const states = new Map(RAFT_NODES.map((n) => [n, st(sim, n)] as const));
+  const names = raft.metrics(states, sim.time).map((m) => m.name);
+  expect(names).toEqual(expect.arrayContaining(['raft/leaders', 'raft/max-term', 'raft/committed', 'n1/log']));
+});

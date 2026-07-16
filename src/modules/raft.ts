@@ -40,6 +40,18 @@ export interface RaftState {
   electionsWon: number;
 }
 
+/** The per-node inspector panel contract. */
+export interface RaftInspect {
+  id: NodeId;
+  role: RaftState['role'];
+  term: number;
+  votedFor: NodeId | null;
+  log: Entry[];
+  commitIndex: number;
+  kv: number;
+  history: HistoryRow[];
+}
+
 type Ev = { kind: 'init' | 'message' | 'timer' | 'external'; self: NodeId; from?: NodeId; time: number; payload: RaftPayload };
 
 const peers = (self: NodeId): NodeId[] => RAFT_NODES.filter((n) => n !== self);
@@ -288,12 +300,26 @@ export const raft: SimModule<RaftState, RaftPayload> = {
     return [s, fx];
   },
 
-  metrics(): MetricSample[] {
-    return []; // Task 7
+  metrics(states): MetricSample[] {
+    const out: MetricSample[] = [];
+    let leadersN = 0;
+    let maxTerm = 0;
+    let committed = 0;
+    for (const s of states.values()) {
+      if (s.role === 'leader') leadersN += 1;
+      maxTerm = Math.max(maxTerm, s.term);
+      committed = Math.max(committed, s.commitIndex);
+      out.push({ name: `${String(s.id).toLowerCase()}/log`, value: s.log.length });
+    }
+    out.push({ name: 'raft/leaders', value: leadersN });
+    out.push({ name: 'raft/max-term', value: maxTerm });
+    out.push({ name: 'raft/committed', value: committed });
+    return out;
   },
 
   inspect(state) {
-    return { id: state.id, role: state.role } as unknown as InspectorTree; // Task 7
+    const { id, role, term, votedFor, log, commitIndex, kv, history } = state;
+    return { id, role, term, votedFor, log, commitIndex, kv, history } as unknown as InspectorTree;
   },
 };
 
