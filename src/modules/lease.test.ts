@@ -130,3 +130,40 @@ test('a stale reject (older token) cannot evict a fresh lease', () => {
   const [after2] = lease.reduce(w, { kind: 'message', self: W1, from: STORE, time: sim.time, payload: { kind: 'reject', token: w.token as number } }, rng);
   expect((after2 as WorkerState).state).toBe('idle'); // matching token → honored
 });
+
+test('a holding worker writes to the store on its loop; fencing off accepts in-order writes as ok', () => {
+  const sim = fresh();
+  sim.external(W1, { cmd: 'acquire' });
+  until(sim, () => storeOf(sim).history.length >= 2, 2000);
+  const st = storeOf(sim);
+  expect(st.history.every((h) => h.writer === W1)).toBe(true);
+  expect(st.history.every((h) => h.outcome === 'ok')).toBe(true);
+  expect(st.lastToken).toBe(1);
+  expect(st.value).toMatch(/^W1#/);
+});
+
+test('the worker stops writing once its own clock says the lease is over', () => {
+  const sim = fresh();
+  sim.external(W1, { cmd: 'acquire' });
+  until(sim, () => workerOf(sim, W1).state === 'holding');
+  sim.runUntil(sim.time + LEASE_TTL * 3);
+  expect(workerOf(sim, W1).state).toBe('idle');
+  const writes = storeOf(sim).history.length;
+  sim.runUntil(sim.time + LEASE_TTL);
+  expect(storeOf(sim).history.length).toBe(writes); // no zombie writes
+});
+
+test('a clean handover (no faults) is anomaly-free at either fencing setting', () => {
+  // W1's honest clock stops it before expiry, W2 takes over with a higher token —
+  // no stale writes, no rejects. The negative baseline the fault tests corrupt.
+  const sim = fresh();
+  sim.external(STORE, { cmd: 'fencing', on: true });
+  sim.runSteps(1);
+  sim.external(W1, { cmd: 'acquire' });
+  until(sim, () => lockOf(sim).holder === W1);
+  sim.external(W2, { cmd: 'acquire' });
+  until(sim, () => lockOf(sim).holder === W2, 3000); // W1 expired, W2 holds token 2
+  until(sim, () => storeOf(sim).lastToken === 2, 2000); // W2's first write landed
+  expect(storeOf(sim).rejects).toBe(0);
+  expect(storeOf(sim).staleAccepts).toBe(0);
+});
