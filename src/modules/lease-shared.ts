@@ -19,7 +19,6 @@ export const HISTORY_CAP = 20;
 export type LeaseMsg =
   | { kind: 'acquire' }
   | { kind: 'grant'; token: number; ttl: number }
-  | { kind: 'expired'; token: number }
   | { kind: 'write'; token: number; value: string }
   | { kind: 'reject'; token: number };
 

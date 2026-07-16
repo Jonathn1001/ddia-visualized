@@ -63,6 +63,31 @@ export interface StoreState {
 
 export type LeaseState = LockState | WorkerState | StoreState;
 
+export interface LockInspect { role: 'lock'; holder: NodeId | null; token: number; expiresAt: number | null; queue: NodeId[] }
+export interface WorkerInspect {
+  role: 'worker';
+  id: NodeId;
+  state: WorkerState['state'];
+  token: number | null;
+  grantAt: number | null;
+  ttl: number | null;
+  rate: number;
+  pausedUntil: number | null;
+  working: boolean;
+  writesSent: number;
+}
+export interface StoreInspect {
+  role: 'store';
+  value: string | null;
+  lastToken: number;
+  fencing: boolean;
+  history: HistoryRow[];
+  writesOk: number;
+  staleAccepts: number;
+  rejects: number;
+}
+export type LeaseInspect = LockInspect | WorkerInspect | StoreInspect;
+
 type Ev = { kind: 'init' | 'message' | 'timer' | 'external'; self: NodeId; from?: NodeId; time: number; payload: LeasePayload };
 
 // ---------- Lock ----------
@@ -97,14 +122,9 @@ function lockReduce(prev: LockState, ev: Ev): [LockState, Effect[]] {
     }
   } else if (ev.kind === 'timer' && 't' in p && p.t === 'expiry') {
     // only the CURRENT lease's timer may release; re-grants outdate old timers.
-    // No 'expired' push to the old holder: a real lock service can't reliably
-    // notify a client of its own revocation (that's the whole premise of fig
-    // 8-3/8-4 — the client can only find out from its own clock, or from a
-    // fencing-token rejection at the store). A previous implementation sent an
-    // active push here; it always outran even the worst-case store write from
-    // the new holder (network latency [1,10] << grant-latency + WRITE_EVERY +
-    // WORK_TICKS + write-latency), which made a pure clock-skew stale write
-    // structurally impossible for any rate. See lease.test.ts's clock-skew tests.
+    // No push to the old holder: a real lock service can't reliably notify a
+    // client of its own revocation — it only finds out from its own clock, or
+    // from a fencing-token rejection at the store (fig 8-3/8-4).
     if (s.holder !== null && s.token === p.token) {
       s.holder = null;
       s.expiresAt = null;
@@ -149,11 +169,6 @@ function workerHandle(s: WorkerState, p: LeaseMsg | LeaseTimer, now: number, fx:
           s.working = false;
         }
         break; // grants with token ≤ current (duplicated/delayed) are ignored
-      case 'expired':
-        // the Lock no longer sends this (see lockReduce's expiry-timer branch) —
-        // handler kept in case a future revision reintroduces a best-effort push.
-        if (s.state === 'holding' && s.token === p.token) dropLease(s);
-        break;
       case 'reject':
         // token guard like every other lease-ending path: a delayed/duplicated
         // reject for a superseded write must not evict a fresh valid lease
@@ -307,11 +322,30 @@ export const lease: SimModule<LeaseState, LeasePayload> = {
     return workerReduce(state, ev);
   },
 
-  metrics(): MetricSample[] {
-    return []; // Task 7
+  metrics(states): MetricSample[] {
+    const out: MetricSample[] = [];
+    for (const s of states.values()) {
+      if (s.role === 'lock') out.push({ name: 'lock/tokens-granted', value: s.granted });
+      if (s.role === 'store') {
+        out.push({ name: 'store/writes-ok', value: s.writesOk });
+        out.push({ name: 'store/stale-accepts', value: s.staleAccepts });
+        out.push({ name: 'store/rejects', value: s.rejects });
+      }
+      if (s.role === 'worker') out.push({ name: `${String(s.id).toLowerCase()}/paused`, value: s.pausedUntil === null ? 0 : 1 });
+    }
+    return out;
   },
 
   inspect(state) {
-    return { role: state.role } as unknown as InspectorTree; // Task 7
+    if (state.role === 'lock') {
+      const { role, holder, token, expiresAt, queue } = state;
+      return { role, holder, token, expiresAt, queue } as unknown as InspectorTree;
+    }
+    if (state.role === 'store') {
+      const { role, value, lastToken, fencing, history, writesOk, staleAccepts, rejects } = state;
+      return { role, value, lastToken, fencing, history, writesOk, staleAccepts, rejects } as unknown as InspectorTree;
+    }
+    const { role, id, state: st, token, grantAt, ttl, rate, pausedUntil, working, writesSent } = state;
+    return { role, id, state: st, token, grantAt, ttl, rate, pausedUntil, working, writesSent } as unknown as InspectorTree;
   },
 };

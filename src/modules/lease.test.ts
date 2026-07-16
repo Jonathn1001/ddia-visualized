@@ -1,7 +1,7 @@
 // src/modules/lease.test.ts
 import { expect, test } from 'vitest';
 import { SeededRng, Simulation } from '../engine';
-import { lease, type LeaseState, type LockState, type StoreState, type WorkerState } from './lease';
+import { lease, type LeaseInspect, type LeaseState, type LockState, type StoreState, type WorkerState } from './lease';
 import { LEASE_TOPOLOGY, LEASE_TTL, LOCK, STORE, W1, W2, type LeasePayload } from './lease-shared';
 
 export function fresh(seed = 8000) {
@@ -251,4 +251,31 @@ test('an honest clock (rate 1) never produces a stale write on its own', () => {
   sim.external(W2, { cmd: 'acquire' });
   sim.runUntil(sim.time + LEASE_TTL * 4);
   expect(storeOf(sim).staleAccepts).toBe(0);
+});
+
+test('inspect exposes the panel contract per role', () => {
+  const sim = fresh();
+  sim.external(W1, { cmd: 'acquire' });
+  until(sim, () => workerOf(sim, W1).state === 'holding');
+  const li = lease.inspect(lockOf(sim)) as unknown as LeaseInspect;
+  expect(li.role).toBe('lock');
+  if (li.role === 'lock') expect(li.holder).toBe(W1);
+  const wi = lease.inspect(workerOf(sim, W1)) as unknown as LeaseInspect;
+  expect(wi.role).toBe('worker');
+  if (wi.role === 'worker') {
+    expect(wi.state).toBe('holding');
+    expect(wi.rate).toBe(1);
+  }
+  const si = lease.inspect(storeOf(sim)) as unknown as LeaseInspect;
+  expect(si.role).toBe('store');
+  if (si.role === 'store') expect(si.fencing).toBe(false);
+});
+
+test('metrics are namespaced: tokens granted, store outcomes, worker pause flags', () => {
+  const sim = fresh();
+  const states = new Map(LEASE_TOPOLOGY.map((id) => [id, sim.getState(id)] as const));
+  const names = lease.metrics(states, sim.time).map((m) => m.name);
+  expect(names).toEqual(
+    expect.arrayContaining(['lock/tokens-granted', 'store/writes-ok', 'store/stale-accepts', 'store/rejects', 'w1/paused', 'w2/paused']),
+  );
 });
