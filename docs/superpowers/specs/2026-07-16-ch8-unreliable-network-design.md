@@ -50,9 +50,14 @@ path: sends with latency/drop/duplicate, timers, partitions, kill/revive. Roadma
 
 **Lock (lease service).** Holds `holder`, `token` (monotonic counter), `expiresAt`
 (its own — true — clock), and a FIFO wait queue. On `acquire`: if free → grant
-`{token: ++n, ttl: LEASE_TTL}` and arm an expiry timer; else enqueue. On expiry:
-release, notify the old holder (`expired` message — which the network may delay or
-drop: the notice is best-effort BY DESIGN), grant to the next waiter.
+`{token: ++n, ttl: LEASE_TTL}` and arm an expiry timer; else enqueue (an acquire
+from the CURRENT holder means it no longer believes its lease — release and
+re-serve). On expiry: release silently and grant to the next waiter. **No expiry
+notice is pushed** *(execution deviation, verified: an active notice structurally
+outran every rival write at any seed/rate, making the clock-skew lesson impossible
+— and real lease clients track expiry on their own clocks anyway; that IS the
+lesson)*. Workers learn the lease is gone only from their own clock or a fencing
+reject.
 
 **Worker (W1/W2).** States `idle → waiting → holding`. On user `acquire` command
 (external) → send `acquire`. On `grant {token, ttl}`: record `grantAt = now`,
