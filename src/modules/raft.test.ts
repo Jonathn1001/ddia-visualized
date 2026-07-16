@@ -1,8 +1,9 @@
 // src/modules/raft.test.ts
 import { expect, test } from 'vitest';
 import { Simulation } from '../engine';
-import { raft, type RaftState } from './raft';
-import { ELECTION_MAX, RAFT_NODES, type RaftPayload } from './raft-shared';
+import { SeededRng } from '../engine/rng';
+import { mergedHistory, raft, type RaftState } from './raft';
+import { ELECTION_MAX, RAFT_NODES, type HistoryRow, type RaftPayload } from './raft-shared';
 
 export function fresh(seed = 9000) {
   const sim = new Simulation<RaftState, RaftPayload>({
@@ -82,7 +83,35 @@ test('a write at a follower is redirected, not appended', () => {
   until(sim, () => leaders(sim).length === 1);
   const follower = RAFT_NODES.find((n) => st(sim, n).role === 'follower') as string;
   sim.external(follower, { cmd: 'write', value: 7 });
-  sim.runSteps(1);
+  // run until the external is delivered — other same-time events may precede it in the queue
+  until(sim, () => st(sim, follower).history.length === 1, 100);
   expect(st(sim, follower).log).toHaveLength(0);
   expect(st(sim, follower).history[0]?.outcome).toBe('redirect');
+});
+
+test('a leader demoted by a higher-term reply re-arms its election timer (liveness)', () => {
+  const sim = fresh();
+  until(sim, () => leaders(sim).length === 1);
+  const lead = leaders(sim)[0];
+  const s = st(sim, lead);
+  // deliver a higher-term vote reply directly through the reducer
+  const [after, fx] = raft.reduce(
+    s,
+    { kind: 'message', self: lead, from: RAFT_NODES.find((n) => n !== lead) as string, time: sim.time, payload: { kind: 'vote', term: s.term + 5, granted: false } },
+    new SeededRng(1),
+  );
+  expect((after as RaftState).role).toBe('follower');
+  expect(fx.some((e) => e.type === 'timer' && (e.payload as { t?: string }).t === 'election')).toBe(true);
+});
+
+test('mergedHistory orders same-node ties numerically, not lexicographically', () => {
+  const rows = [
+    { id: 'N1:10', node: 'N1', op: 'write', value: 10, invokedAt: 5, respondedAt: 6, outcome: 'ok' },
+    { id: 'N1:9', node: 'N1', op: 'write', value: 9, invokedAt: 5, respondedAt: 6, outcome: 'ok' },
+  ] as const;
+  const states = new Map([
+    ['N1', { ...raft.init('N1', { nodeIds: [...RAFT_NODES] }, new SeededRng(1)), history: [...rows] as HistoryRow[] }],
+  ]);
+  const merged = mergedHistory(states as Map<string, RaftState>);
+  expect(merged.map((r) => r.id)).toEqual(['N1:9', 'N1:10']);
 });

@@ -56,12 +56,18 @@ function armHeartbeat(s: RaftState, fx: Effect[]): void {
   fx.push({ type: 'timer', delay: HEARTBEAT, payload: { t: 'heartbeat', nonce: s.heartbeatNonce } });
 }
 
-/** Any sign of a higher term → become that term's follower (paper rule, all RPCs). */
-function adoptTerm(s: RaftState, term: number): void {
+/**
+ * Any sign of a higher term → become that term's follower (paper rule, all RPCs).
+ * Re-arms the election timer: a demoted leader has no timer pending (heartbeats
+ * are nonce-guarded against non-leaders), so without this it could never
+ * self-recover — a liveness hole.
+ */
+function adoptTerm(s: RaftState, term: number, rng: SeededRng, fx: Effect[]): void {
   s.term = term;
   s.role = 'follower';
   s.votedFor = null;
   s.votes = [];
+  armElection(s, rng, fx);
 }
 
 function appendFor(s: RaftState, to: NodeId): RaftMsg {
@@ -136,7 +142,7 @@ function handleTimer(s: RaftState, p: RaftTimer, rng: SeededRng, fx: Effect[]): 
 }
 
 function handleMsg(s: RaftState, p: RaftMsg, from: NodeId, now: number, rng: SeededRng, fx: Effect[]): void {
-  if (p.term > s.term) adoptTerm(s, p.term);
+  if (p.term > s.term) adoptTerm(s, p.term, rng, fx);
 
   switch (p.kind) {
     case 'req-vote': {
@@ -284,7 +290,9 @@ export const raft: SimModule<RaftState, RaftPayload> = {
 export function mergedHistory(states: Map<NodeId, RaftState>): HistoryRow[] {
   const rows: HistoryRow[] = [];
   for (const s of states.values()) rows.push(...s.history);
-  return rows.sort((a, b) => a.invokedAt - b.invokedAt || a.id.localeCompare(b.id));
+  return rows.sort(
+    (a, b) => a.invokedAt - b.invokedAt || a.node.localeCompare(b.node) || Number(a.id.split(':')[1]) - Number(b.id.split(':')[1]),
+  );
 }
 
 /** Only completed, value-bearing ops participate in the linearizability check. */
