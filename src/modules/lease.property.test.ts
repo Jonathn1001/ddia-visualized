@@ -54,6 +54,18 @@ test('token monotonicity: grants strictly increase, count matches the counter', 
   );
 });
 
+// Deterministic adversarial example: the fig 8-4 shape under the generator's own
+// Cmd type, so EVERY run of the fencing-safety property witnesses at least one
+// would-be-stale write (random scripts only produce one ~3.5% of the time).
+// Power proven against seed 8201 (= 8200 + the example's seed 1): with fencing
+// OFF this exact script yields staleAccepts=1; with fencing ON it yields
+// rejects=1, staleAccepts=0 — the guarded condition genuinely fires.
+const FIG84_SCRIPT: Cmd[] = [
+  { at: 0, node: W1, ext: { cmd: 'acquire' } },
+  { at: 15, node: W1, ext: { fault: 'gc-pause', ticks: 180 } }, // lands in the check→work window
+  { at: 20, node: W2, ext: { cmd: 'acquire' } },
+];
+
 test('fencing safety: with fencing ON, accepted tokens are non-decreasing — no stale write EVER gets in', () => {
   fc.assert(
     fc.property(script, fc.integer({ min: 1, max: 1000 }), (cmds, s) => {
@@ -62,7 +74,7 @@ test('fencing safety: with fencing ON, accepted tokens are non-decreasing — no
       const accepted = store.history.filter((h) => h.outcome !== 'rejected').map((h) => h.token);
       for (let i = 1; i < accepted.length; i++) expect(accepted[i]).toBeGreaterThanOrEqual(accepted[i - 1]);
     }),
-    { numRuns: 25 },
+    { numRuns: 100, examples: [[FIG84_SCRIPT, 1]] },
   );
 });
 
