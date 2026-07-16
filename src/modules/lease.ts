@@ -81,8 +81,20 @@ function lockReduce(prev: LockState, ev: Ev): [LockState, Effect[]] {
   const fx: Effect[] = [];
   const p = ev.payload;
   if (ev.kind === 'message' && 'kind' in p && p.kind === 'acquire' && ev.from) {
-    if (s.holder === null) grantTo(s, ev.from, ev.time, fx);
-    else if (s.holder !== ev.from && !s.queue.includes(ev.from)) s.queue.push(ev.from);
+    if (s.holder === null) {
+      grantTo(s, ev.from, ev.time, fx);
+    } else if (s.holder === ev.from) {
+      // an acquire from the CURRENT holder means it no longer believes in its
+      // lease — release and re-serve (no 'expired' notice: they asked). The
+      // old expiry timer stays armed; its token guard makes it a no-op.
+      s.holder = null;
+      s.expiresAt = null;
+      s.queue.push(ev.from); // fair: behind anyone already waiting
+      const next = s.queue.shift();
+      if (next) grantTo(s, next, ev.time, fx);
+    } else if (!s.queue.includes(ev.from)) {
+      s.queue.push(ev.from);
+    }
   } else if (ev.kind === 'timer' && 't' in p && p.t === 'expiry') {
     // only the CURRENT lease's timer may release; re-grants outdate old timers
     if (s.holder !== null && s.token === p.token) {
@@ -126,7 +138,9 @@ function workerHandle(s: WorkerState, p: LeaseMsg | LeaseTimer, now: number, fx:
         if (s.state === 'holding' && s.token === p.token) dropLease(s);
         break;
       case 'reject':
-        if (s.state === 'holding') dropLease(s); // the store knew better than our clock
+        // token guard like every other lease-ending path: a delayed/duplicated
+        // reject for a superseded write must not evict a fresh valid lease
+        if (s.state === 'holding' && s.token === p.token) dropLease(s); // the store knew better than our clock
         break;
       case 'acquire':
       case 'write':
@@ -182,17 +196,19 @@ function workerReduce(prev: WorkerState, ev: Ev): [WorkerState, Effect[]] {
 
   // GC pause: the process sees nothing until it wakes — every message/timer is
   // re-emitted as a wake timer carrying the original payload, in arrival order.
+  // A wake that itself lands mid-pause (a second pause extended past the first
+  // wake) is unwrapped BEFORE re-deferral so the payload never nests.
   if (s.pausedUntil !== null && ev.time < s.pausedUntil) {
     fx.push({
       type: 'timer',
       delay: s.pausedUntil - ev.time,
-      payload: { t: 'wake', inner: p as LeaseMsg | LeaseTimer },
+      payload: { t: 'wake', inner: 't' in p && p.t === 'wake' ? p.inner : (p as LeaseMsg | LeaseTimer) },
     });
     return [s, fx];
   }
 
   let payload = p as LeaseMsg | LeaseTimer;
-  if ('t' in payload && payload.t === 'wake') {
+  while ('t' in payload && payload.t === 'wake') {
     s.pausedUntil = null; // the backlog is draining — the pause is over
     payload = payload.inner;
   }

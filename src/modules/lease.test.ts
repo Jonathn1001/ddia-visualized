@@ -1,6 +1,6 @@
 // src/modules/lease.test.ts
 import { expect, test } from 'vitest';
-import { Simulation } from '../engine';
+import { SeededRng, Simulation } from '../engine';
 import { lease, type LeaseState, type LockState, type StoreState, type WorkerState } from './lease';
 import { LEASE_TOPOLOGY, LEASE_TTL, LOCK, STORE, W1, W2, type LeasePayload } from './lease-shared';
 
@@ -78,4 +78,43 @@ test('sim virtual time actually advances under this module (unlike Ch7)', () => 
   sim.external(W1, { cmd: 'acquire' });
   until(sim, () => workerOf(sim, W1).state === 'holding');
   expect(sim.time).toBeGreaterThan(t0);
+});
+
+test('a second gc-pause before the wake fires delays the backlog but never loses it', () => {
+  const sim = fresh();
+  sim.external(W1, { cmd: 'acquire' });
+  sim.runSteps(1); // acquire message is now in flight toward the Lock
+  sim.external(W1, { fault: 'gc-pause', ticks: 30 }); // grant will arrive mid-pause → deferred
+  until(sim, () => sim.time >= 10, 200);
+  sim.external(W1, { fault: 'gc-pause', ticks: 100 }); // extends past the first wake
+  until(sim, () => workerOf(sim, W1).state === 'holding', 4000); // the grant must survive both pauses
+  expect(workerOf(sim, W1).token).toBe(1);
+});
+
+test('an acquire from the recorded holder releases and re-serves instead of vanishing', () => {
+  const sim = fresh();
+  sim.external(W1, { fault: 'clock-skew', rate: 4 }); // fast clock: drops the lease early
+  sim.external(W1, { cmd: 'acquire' });
+  until(sim, () => workerOf(sim, W1).state === 'holding');
+  until(sim, () => workerOf(sim, W1).state === 'idle', 2000); // fast clock gave it up early
+  sim.external(W1, { cmd: 'acquire' }); // Lock still thinks W1 holds token 1
+  until(sim, () => workerOf(sim, W1).state === 'holding' && workerOf(sim, W1).token === 2, 4000);
+  expect(lockOf(sim).holder).toBe(W1);
+  expect(lockOf(sim).token).toBe(2);
+});
+
+test('a stale reject (older token) cannot evict a fresh lease', () => {
+  const sim = fresh();
+  sim.external(W1, { cmd: 'acquire' });
+  until(sim, () => workerOf(sim, W1).state === 'holding');
+  const w = workerOf(sim, W1);
+  // hand-deliver a stale reject for a token the worker no longer uses
+  sim.external(W1, { fault: 'clock-skew', rate: 1 }); // no-op spacer keeps external ordering obvious
+  // real path: inject via the module's message shape — simulate with a direct external is not possible,
+  // so drive it through state: the guard is unit-visible via applying reduce directly.
+  const rng = new SeededRng(1);
+  const [after] = lease.reduce(w, { kind: 'message', self: W1, from: STORE, time: sim.time, payload: { kind: 'reject', token: 999 } }, rng);
+  expect((after as WorkerState).state).toBe('holding'); // token 999 ≠ 1 → ignored
+  const [after2] = lease.reduce(w, { kind: 'message', self: W1, from: STORE, time: sim.time, payload: { kind: 'reject', token: w.token as number } }, rng);
+  expect((after2 as WorkerState).state).toBe('idle'); // matching token → honored
 });
