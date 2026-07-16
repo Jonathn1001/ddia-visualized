@@ -200,3 +200,40 @@ test('a revived old leader with a stale term steps down on first contact', () =>
   const neo = leaders(sim).find((l) => l !== old) as string;
   expect(st(sim, old).term).toBeGreaterThanOrEqual(st(sim, neo).term - 1);
 });
+
+test('logs converge: any two nodes agree at every index they share (after quiet time)', () => {
+  const sim = fresh(9011);
+  until(sim, () => leaders(sim).length === 1);
+  const l1 = leaders(sim)[0];
+  sim.external(l1, { cmd: 'write', value: 1 });
+  sim.external(l1, { cmd: 'write', value: 2 });
+  until(sim, () => st(sim, l1).commitIndex >= 2, 6000);
+  // partition the leader alone with an uncommitted dangling write
+  const others = RAFT_NODES.filter((n) => n !== l1);
+  sim.control({ type: 'partition', groups: [[l1], others] });
+  sim.external(l1, { cmd: 'write', value: 3 }); // dangles
+  until(sim, () => others.some((n) => st(sim, n).role === 'leader'), 20000);
+  const l2 = others.find((n) => st(sim, n).role === 'leader') as string;
+  sim.external(l2, { cmd: 'write', value: 4 });
+  until(sim, () => st(sim, l2).commitIndex >= 3, 8000);
+  sim.control({ type: 'heal' });
+  until(sim, () => st(sim, l1).kv === st(sim, l2).kv && st(sim, l1).log.length === st(sim, l2).log.length, 20000);
+  // log matching: same index → same term → same value
+  for (const a of RAFT_NODES) {
+    for (const b of RAFT_NODES) {
+      const la = st(sim, a).log;
+      const lb = st(sim, b).log;
+      for (let i = 0; i < Math.min(la.length, lb.length); i++) {
+        if (la[i].term === lb[i].term) expect(la[i].seq).toBe(lb[i].seq);
+      }
+    }
+  }
+  // committed prefix identical everywhere it exists
+  const commit = st(sim, l2).commitIndex;
+  for (const n of RAFT_NODES) {
+    const s = st(sim, n);
+    for (let i = 0; i < Math.min(commit, s.commitIndex); i++) {
+      expect(s.log[i].seq).toBe(st(sim, l2).log[i].seq);
+    }
+  }
+});
