@@ -5,6 +5,7 @@
 import type { InspectorTree, MetricSample, ModuleConfig, SimModule } from '../engine/module';
 import {
   CREDOS,
+  opLabel,
   type Level,
   type Op,
   type ScheduleStep,
@@ -344,6 +345,50 @@ export function applyStep(prev: TxnState, step: ScheduleStep): TxnState {
   return s;
 }
 
+/** Latest committed value per key — newest commit stamp wins, not append order. */
+export function committedValue(s: TxnState, key: string): number | undefined {
+  let best: Version | undefined;
+  for (const v of s.store[key] ?? []) {
+    if (v.committedAt === null) continue;
+    if (!best || v.committedAt >= (best.committedAt as number)) best = v;
+  }
+  return best?.value;
+}
+
+export interface TxnInspect {
+  level: Level;
+  credo: string;
+  txns: Record<TxnId, TxnInfo>;
+  committed: Record<string, number>;
+  pending: Record<string, { txn: TxnId; value: number }[]>;
+  queue: string[];
+  anomalies: Anomaly[];
+  counters: { commits: number; aborts: number; queuedOps: number; skippedOps: number };
+}
+
+export function txnInspect(s: TxnState): TxnInspect {
+  const committed: Record<string, number> = {};
+  const pending: Record<string, { txn: TxnId; value: number }[]> = {};
+  for (const key of Object.keys(s.store)) {
+    const c = committedValue(s, key);
+    if (c !== undefined) committed[key] = c;
+    const u = s.store[key]
+      .filter((v) => v.committedAt === null && v.txn !== null)
+      .map((v) => ({ txn: v.txn as TxnId, value: v.value }));
+    if (u.length > 0) pending[key] = u;
+  }
+  return {
+    level: s.level,
+    credo: CREDOS[s.level],
+    txns: s.txns,
+    committed,
+    pending,
+    queue: s.queue.map(opLabel),
+    anomalies: s.anomalies,
+    counters: { commits: s.commits, aborts: s.aborts, queuedOps: s.queuedOps, skippedOps: s.skippedOps },
+  };
+}
+
 export const txn: SimModule<TxnState, TxnPayload> = {
   id: 'txn-isolation',
   chaos: [],
@@ -371,7 +416,6 @@ export const txn: SimModule<TxnState, TxnPayload> = {
   },
 
   inspect(state) {
-    // minimal until Task 7
-    return { level: state.level, credo: CREDOS[state.level] } as unknown as InspectorTree;
+    return txnInspect(state) as unknown as InspectorTree;
   },
 };

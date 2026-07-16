@@ -1,7 +1,7 @@
 // src/modules/txn.test.ts
 import { expect, test } from 'vitest';
 import { Simulation } from '../engine';
-import { txn, type TxnState } from './txn';
+import { txn, committedValue, type TxnState, type TxnInspect } from './txn';
 import { TXN_TOPOLOGY, type Level, type ScheduleStep, type TxnPayload } from './txn-shared';
 
 export function fresh(initial: Record<string, number>, seed = 7000) {
@@ -351,4 +351,47 @@ test('write skew: NOT flagged when the txns did not overlap in time', () => {
   // committed, the windows are disjoint, so no skew flag either way.
   expect(st(sim, 'RC').anomalies).toEqual([]);
   expect(st(sim, 'RC').txns.T2.abortReason).toContain('ensure failed');
+});
+
+test('committedValue picks the version with the newest commit stamp, not append order', () => {
+  const sim = fresh({ x: 10 });
+  play(sim, [
+    { txn: 'T2', op: { op: 'begin' } },
+    { txn: 'T2', op: { op: 'write', key: 'x', value: 7 } }, // appended first...
+    { txn: 'T1', op: { op: 'begin' } },
+    { txn: 'T1', op: { op: 'write', key: 'x', value: 5 } },
+    { txn: 'T1', op: { op: 'commit' } }, // ...but T1 commits first
+    { txn: 'T2', op: { op: 'commit' } }, // T2 commits later → newest
+  ]);
+  expect(committedValue(st(sim, 'RC'), 'x')).toBe(7);
+});
+
+test('inspect exposes the full panel contract', () => {
+  const sim = fresh({ x: 10 });
+  play(sim, [
+    { txn: 'T1', op: { op: 'begin' } },
+    { txn: 'T1', op: { op: 'write', key: 'x', value: 99 } },
+    { txn: 'T2', op: { op: 'begin' } },
+    { txn: 'T2', op: { op: 'read', key: 'x' } },
+  ]);
+  const ru = txn.inspect(st(sim, 'RU')) as unknown as TxnInspect;
+  expect(ru.level).toBe('RU');
+  expect(ru.credo).toContain('uncommitted');
+  expect(ru.committed).toEqual({ x: 10 });
+  expect(ru.pending).toEqual({ x: [{ txn: 'T1', value: 99 }] });
+  expect(ru.anomalies).toHaveLength(1);
+  expect(ru.counters.commits).toBe(0);
+
+  const ser = txn.inspect(st(sim, 'SER')) as unknown as TxnInspect;
+  expect(ser.queue).toEqual(['T2 begin', 'T2 read x']);
+});
+
+test('metrics are namespaced per level', () => {
+  const sim = fresh({ x: 10 });
+  const states = new Map(TXN_TOPOLOGY.map((id) => [id, st(sim, id)] as const));
+  const names = txn.metrics(states, sim.time).map((m) => m.name);
+  for (const l of ['ru', 'rc', 'si', 'ser']) {
+    expect(names).toContain(`${l}/commits`);
+    expect(names).toContain(`${l}/anomalies`);
+  }
 });
