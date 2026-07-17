@@ -27,6 +27,8 @@ export interface SchedState {
   role: 'sched';
   id: NodeId;
   started: boolean;
+  /** One job per epoch, latched at injection — see the external-branch comment below. */
+  jobQueued: boolean;
   lastPong: Record<string, number>;
   live: Record<string, boolean>;
   incarnation: Record<string, number>;
@@ -222,29 +224,44 @@ function schedReduce(s: SchedState, ev: Ev, fx: Effect[]): void {
     return;
   }
   if (ev.kind === 'external') {
-    // Deviation from the brief: start the job SYNCHRONOUSLY within this event
-    // rather than via a deferred 1-tick 'start-job' timer. A hop would let
-    // `started` (the re-entrancy guard) go true before df.attempt actually
-    // bumps, so a second run-job arriving in that gap is correctly ignored,
-    // but a caller polling `started` to know "the job has begun" (as the
-    // Step-1 test does) would sample df.attempt one tick too early and then
-    // see it change out from under it when the deferred hop finally fires.
-    // Doing both in one event keeps the guard atomic AND makes `started`
-    // true exactly when df.attempt reaches its started value — no observable
-    // gap. batch-shared.ts still declares the 'start-job' timer variant; it
-    // is simply never emitted now.
-    if ('cmd' in p && p.cmd === 'run-job' && !s.started) {
-      s.started = true; // one job per epoch — module-level guard, mirrors the UI
-      s.mr.phase = 'map';
-      for (const m of MAP_TASKS) s.mr.tasks[m].status = 'runnable';
-      scheduleMr(s, fx);
-      s.df.started = true;
-      startDfAttempt(s, fx);
+    // External run-job enters via the 1-tick timer hop (Ch9 lesson,
+    // src/modules/raft.ts:291-298): sim.external() schedules at the frozen
+    // sim.time, so side effects performed directly in this branch would land
+    // on the SAME tick as whatever produced that external call, not a
+    // strictly later one. The hop fixes that by deferring all real work to
+    // the 'start-job' timer (batch-shared.ts), which fires one tick later.
+    //
+    // `jobQueued` is the one-job-per-epoch guard, and it latches HERE, at
+    // injection — not at the timer fire — so a second run-job arriving
+    // before or after the hop fires is ignored either way; no state besides
+    // the guard changes at injection, matching the Ch9 pattern exactly.
+    //
+    // `started` only flips true when the timer fires, immediately before the
+    // MR/df kick-off runs in the same reduce call. That ordering closes the
+    // observation gap the earlier synchronous version was dodging: any
+    // observer polling `started` (e.g. `until(() => jt.started)`) can only
+    // see it go true once df.attempt has already reached its started value,
+    // so the second-run-job test's `df.attempt` capture is never one tick
+    // stale.
+    if ('cmd' in p && p.cmd === 'run-job' && !s.jobQueued) {
+      s.jobQueued = true;
+      fx.push({ type: 'timer', delay: 1, payload: { t: 'start-job' } });
     }
     return;
   }
   if (ev.kind === 'timer' && 't' in (p as object)) {
     const t = p as BatchTimer;
+    if (t.t === 'start-job') {
+      // jobQueued (latched at injection, never reset) guarantees this hop
+      // fires at most once per epoch, so no re-entrancy check is needed here.
+      s.started = true;
+      s.mr.phase = 'map';
+      for (const m of MAP_TASKS) s.mr.tasks[m].status = 'runnable';
+      scheduleMr(s, fx);
+      s.df.started = true;
+      startDfAttempt(s, fx);
+      return;
+    }
     if (t.t === 'ping') {
       for (const w of WORKERS) {
         if (s.live[w] && ev.time - s.lastPong[w] > DEAD_AFTER) declareDead(s, w, ev.time, fx);
@@ -586,7 +603,7 @@ export const batch: SimModule<BatchState, BatchPayload> = {
   init(nodeId) {
     if (nodeId === JT) {
       return {
-        role: 'sched', id: nodeId, started: false,
+        role: 'sched', id: nodeId, started: false, jobQueued: false,
         lastPong: Object.fromEntries(WORKERS.map((w) => [w, 0])),
         live: Object.fromEntries(WORKERS.map((w) => [w, true])),
         incarnation: Object.fromEntries(WORKERS.map((w) => [w, 0])),
