@@ -1305,7 +1305,7 @@ Also add `lostAfterDone` to `BatchSideCounters` (mr-only, 0 on df) — challenge
 
 Spec §7 invariants: (a) completion under any script that ends with everyone revived; (b) exact output on completion, both sides, always; (c) single-kill damage inequality, conditional on a df restart; (d) determinism.
 
-- [ ] **Step 1: Write**
+- [x] **Step 1: Write**
 
 ```ts
 // src/modules/batch.property.test.ts
@@ -1394,9 +1394,9 @@ test('(d) determinism: same script + seed → identical states', () => {
 }, 30_000);
 ```
 
-- [ ] **Step 2: Run** — a counterexample is a REAL recovery bug: shrink, report, fix minimally, document. Note runtime; if the suite exceeds ~60s, halve `numRuns` and say so in the commit body. Property (c)'s guard is spec-faithful: a shrugged-off kill makes no claim (MR can still lose an un-fetched map output to the same kill).
+- [x] **Step 2: Run** — a counterexample is a REAL recovery bug: shrink, report, fix minimally, document. Note runtime; if the suite exceeds ~60s, halve `numRuns` and say so in the commit body. Property (c)'s guard is spec-faithful: a shrugged-off kill makes no claim (MR can still lose an un-fetched map output to the same kill). — Elevated numRuns (4000+ scripts) surfaced SIX distinct recovery bugs under INVISIBLE kills (kill+revive faster than DEAD_AFTER); all fixed via a JT reconciliation heartbeat + df stall watchdog (DF_STALL). 6 shrunk counterexamples pinned as deterministic regressions. Kept plan numRuns (12/15/8; suite <8s). See `.superpowers/sdd/task-6-report.md`.
 
-- [ ] **Step 3: Commit** — `test(modules): batch property suite — completion, exact output, damage inequality, determinism`
+- [x] **Step 3: Commit** — `test(modules): batch property suite — completion, exact output, damage inequality, determinism` (commit `6085593`)
 
 ---
 
