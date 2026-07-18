@@ -22,6 +22,13 @@ Interactive decisions (2026-07-18):
   exactly-once. Maps to the three biggest Ch12 ideas.
 - **Single fan-out pipeline** layout (not a twin) — one source lane, three derived
   panels, one lag gauge each.
+- **Single authoritative sim node** (`DB`) owns the log + all three view sub-states
+  (decided at plan time, 2026-07-18). Ch12 has no kill/message-loss chaos, so the
+  transport is not the lesson; a multi-node network would force awkward cross-node
+  wipe/replay coordination for no pedagogical gain. Delivery is abstracted to a
+  timer-paced per-view offset advance — an intended simplification, in the spirit of
+  Ch10's hard-barrier shuffle. Real CDC is distributed (Debezium → Kafka →
+  consumers); the debrief says so.
 
 ---
 
@@ -32,13 +39,15 @@ Interactive decisions (2026-07-18):
   space + seed writes, the log-record and query payload types, the derived-view value
   shapes, timing constants, and the pure `derive*(log)` reference functions the
   property/rebuild tests assert against.
-- `src/modules/unbundled.ts` — one `SimModule<UnbundledState>`. Nodes: an OLTP/log
-  owner (source of truth) plus the three derived consumers; each consumer holds its
-  own `committedOffset` and pulls the next log record on a delivery cadence. Log
-  append on write, per-consumer replay, wipe + rebuild-from-0, crash-retry
-  redelivery, per-consumer idempotence (last-applied offset), query resolution
-  against each view, `inspect`/`metrics` for the panels. Chaos declaration drives the
-  toolbar (see §3).
+- `src/modules/unbundled.ts` — one `SimModule<UnbundledState>` on a single node
+  `DB`. State holds the append-only `log` plus three view sub-states, each with its
+  own `offset`, `paused`, `dedup`, and contents. A per-view `{t:'advance'}` timer
+  (armed on the `init` event, re-armed every `ADVANCE_EVERY` ticks — the batch/
+  ping-pong precedent) applies `log[offset]` and advances `offset` toward head unless
+  the view is paused. Log append on write, wipe + rebuild-from-0, redelivery
+  (re-apply the last record without advancing), per-view idempotence (skip a record
+  whose offset < `offset`), `inspect`/`metrics` for the panels. All reader actions
+  are external commands to `DB` (§3); `chaos: []` (no ChaosToolbar).
 - Lab `src/ui/labs/unbundled/UnbundledLab.tsx` (12.1): source lane (Client → OLTP →
   Log offset tape), three `DerivedPanel`s, a query bar, `ChallengePanel` ×3,
   forward-only `TimelineScrubber` (Ch8 lesson).
@@ -71,7 +80,7 @@ few records so views have content on load; the challenges add fresh writes.
 
 ### The log (source of truth)
 
-A single append-only partition owned by the source node. Each write appends one
+A single append-only partition owned by the `DB` node. Each write appends one
 record:
 
 ```ts
@@ -94,39 +103,45 @@ reference derivers used by tests:
 - **Analytics** — `category → count`, a monotonic per-category tally. Can
   **double-count** under redelivery. `deriveAnalytics(prefix)`.
 
-### Consumers, offsets, lag
+### Views, offsets, lag
 
-Each derived consumer holds `committedOffset`; **lag = H − committedOffset** — the
-core gauge, one per view. On a delivery-cadence tick a consumer pulls the next record
-`log[committedOffset]`, applies it to its view, and advances the offset. A paused
-consumer stops pulling (lag grows). Idempotence, when on, records `lastAppliedOffset`
-and skips a record whose offset ≤ it (makes replay/redelivery a no-op).
+Each view holds its own `offset` (next log index to consume); **lag = H − offset** —
+the core gauge, one per view. A per-view `{t:'advance'}` timer applies `log[offset]`
+and advances `offset` toward head each `ADVANCE_EVERY` ticks, unless the view is
+`paused` (lag then grows). Idempotence (`dedup`), when on, skips applying a record
+whose offset `< offset` — making a redelivery of the last record a no-op.
 
-### Nodes (sim topology)
+### Topology
 
-Source/log owner + three consumer nodes (`SEARCH`, `CACHE`, `ANALYTICS`). Delivery of
-a log record to a consumer is a `SimNetwork` message; a crash-retry re-sends the
-in-flight record (redelivery). Final node list fixed in `unbundled-shared.ts` during
-Task 1.
+**One sim node, `DB`** (`nodeIds: ['DB']`), owns `log` + the three view sub-states.
+No network, no cross-node messages — the pacing is internal `timer` effects. The
+three-lane fan-out is a UI rendering of `DB`'s inspect tree, not three sim nodes. The
+node list is fixed in `unbundled-shared.ts` during Task 1.
 
 ---
 
 ## 3. Interaction & chaos
 
-**Reader actions:**
-- **Write** — `upsert(key, value)` from Client → appends to Log, head `H` advances.
-  OLTP reflects it immediately; derived views do not.
-- **Query a view** — `SearchIndex.lookup(term)`, `Cache.get(key)`, or
-  `Analytics.count(category)`. Answer reflects only that consumer's consumed prefix →
-  staleness is visible, tagged with the offset that produced it.
-- **Step / play** — advance ticks; consumers pull, lags shrink.
+All reader actions are **external commands to `DB`** (no ChaosToolbar; per-view
+buttons live in each `DerivedPanel`).
 
-**Chaos knobs (declared so the toolbar/panels render them):**
-- **Pause / resume a consumer** — freeze one view's offset; lag grows on demand
-  (C1 setup, C2 setup).
-- **Wipe a view** — clear state + reset `committedOffset → 0` (C2).
-- **Crash-retry a consumer** — redeliver the in-flight record so it reprocesses (C3).
-- **Idempotence toggle** (per-consumer) — the **fix** for C3.
+**Reader actions:**
+- **Write** — `{cmd:'write', key, value}` → appends to `log`, head `H` advances. The
+  log (source of truth) reflects it immediately; derived views do not.
+- **Query a view** — read-only, computed in the UI from the view's contents in
+  `inspect`: `search.index[term]`, `cache.map[key]`, `analytics.tally[cat]`. Answer
+  reflects only that view's consumed prefix → staleness is visible. No event.
+- **Step / play** — advance ticks; the per-view `advance` timers apply records, lags
+  shrink.
+
+**Per-view controls (external commands to `DB`, carrying the target view):**
+- **Pause / resume** — `{cmd:'pause'|'resume', view}` freezes/unfreezes that view's
+  offset advance; lag grows on demand (C1, C2 setup).
+- **Wipe** — `{cmd:'wipe', view}` clears contents + resets `offset → 0`; the advance
+  timer rebuilds it from the log (C2).
+- **Redeliver** — `{cmd:'redeliver', view}` re-applies `log[offset-1]` once *without*
+  advancing `offset` (a crash-retry reprocessing the last record) (C3).
+- **Idempotence toggle** — `{cmd:'toggle-dedup', view}`; the **fix** for C3.
 
 ---
 
@@ -139,9 +154,9 @@ challenge-verifier contract).
 
 | # | Name | Setup → win condition |
 |---|------|-----------------------|
-| **C1** | **Stale read (RYW)** | SearchIndex lagging (paused / behind). Write new key `k`. Query index for a term of `k` **before** catch-up → **miss** while `OLTP.get(k)` is present (the read-your-writes anomaly). Resume → play → same query now **hits**. **Win = miss-then-hit both observed in one epoch.** |
-| **C2** | **Rebuild from log** | Wipe Cache (empty / wrong). Replay from offset 0 → play to catch-up. **Win = `Cache` deep-equals `deriveCache(fullLog)`** — the log is truth, derived data disposable. |
-| **C3** | **Exactly-once** | Idempotence OFF: crash-retry Analytics on an in-flight record → aggregate **over-counts** (`count > true`). Toggle ON, redo the same redelivery → aggregate **exact**. **Win = double-count seen off, exact on, in one epoch.** |
+| **C1** | **Stale read (RYW)** | Search view paused (lagging). Write new key `k`. Query the index for a term of `k` **before** catch-up → **miss** while the `log` already holds `k` (the read-your-writes anomaly). Resume → play → same query now **hits**. **Win = miss-then-hit both observed in one epoch.** |
+| **C2** | **Rebuild from log** | Wipe Cache (empty / wrong). The advance timer replays from offset 0 → play to catch-up. **Win = `cache.map` deep-equals `deriveCache(fullLog)` and `offset === head`** — the log is truth, derived data disposable. |
+| **C3** | **Exactly-once** | Idempotence OFF: redeliver the last record to Analytics → its tally **over-counts** (`> deriveAnalytics(log)`). Toggle dedup ON, redeliver again → tally stays **exact**. **Win = double-count seen off, exact on, in one epoch.** |
 
 ---
 
@@ -150,11 +165,11 @@ challenge-verifier contract).
 **UnbundledLab** — single-pipeline layout:
 - **Source lane (top):** Client → OLTPStore → Log. Log renders as a horizontal offset
   tape (records `0..H`), head marked.
-- **Three DerivedPanels:** each shows name, `committedOffset` vs head `H`, a **lag
-  gauge** (`H − offset`), the view's contents, and per-view controls (pause, wipe,
-  crash-retry, idempotence toggle).
-- **Query bar:** issue a lookup/get/count; see the answer + the offset that produced
-  it.
+- **Three DerivedPanels:** each shows name, `offset` vs head `H`, a **lag gauge**
+  (`H − offset`), the view's contents, and per-view controls (pause/resume, wipe,
+  redeliver, idempotence toggle).
+- **Query bar:** issue a lookup/get/count (read-only, computed from the view's
+  contents); see the answer against the current, possibly-stale, view.
 - **ChallengePanel** ×3: predict → drive → win banner (mirrors Ch10 `ChallengePanel`
   wiring exactly).
 - **DerivedPanel** is presentational (pure props), own jsdom tests (Ch10 `StagePanel`
