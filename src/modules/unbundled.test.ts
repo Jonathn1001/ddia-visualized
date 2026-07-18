@@ -99,3 +99,78 @@ describe('resume drains the backlog', () => {
     expect(db(sim).cache.map['p9']).toEqual({ title: 'redis stream', category: 'tool' });
   });
 });
+
+describe('rebuild: wipe a view then replay from offset 0', () => {
+  test('a wiped cache rebuilds to an exact copy of the reference derivation', () => {
+    const sim = makeSim();
+    boot(sim);
+    sim.external(DB, { cmd: 'write', key: 'p9', value: { title: 'flink jobs', category: 'tool' } });
+    sim.runSteps(ADVANCE_EVERY * 30);
+    const full = db(sim).log;
+    sim.external(DB, { cmd: 'wipe', view: 'cache' });
+    // drain: one same-tick advance timer was already queued ahead of this external (lower
+    // seq at the same virtual time), then the wipe command itself (Simulation.external()
+    // only enqueues — see sim.ts).
+    sim.runSteps(2);
+    expect(db(sim).cache.offset).toBe(0);
+    expect(db(sim).cache.map).toEqual({}); // disposable: gone
+    sim.runSteps(ADVANCE_EVERY * 40);
+    const s = db(sim);
+    expect(s.cache.offset).toBe(s.log.length); // fully rebuilt
+    expect(s.cache.map).toEqual(deriveCache(full)); // byte-exact from the log
+  });
+  test('search rebuilds its inverted index exactly after a wipe', () => {
+    const sim = makeSim();
+    boot(sim);
+    sim.external(DB, { cmd: 'wipe', view: 'search' });
+    sim.runSteps(ADVANCE_EVERY * 40);
+    const s = db(sim);
+    expect(s.search.index).toEqual(deriveSearch(s.log));
+  });
+});
+
+describe('exactly-once: redelivery double-counts only without dedup', () => {
+  test('dedup OFF: redelivering the last record over-counts analytics', () => {
+    const sim = makeSim();
+    boot(sim);
+    sim.external(DB, { cmd: 'write', key: 'p9', value: { title: 'spark rdd', category: 'book' } });
+    sim.runSteps(ADVANCE_EVERY * 30); // analytics caught up, exact
+    expect(db(sim).analytics.tally).toEqual(deriveAnalytics(db(sim).log));
+    sim.external(DB, { cmd: 'redeliver', view: 'analytics' });
+    // drain: one same-tick advance timer was already queued ahead of this external (lower
+    // seq at the same virtual time), then the redeliver command itself (Simulation.external()
+    // only enqueues — see sim.ts).
+    sim.runSteps(2);
+    const s = db(sim);
+    const truth = deriveAnalytics(s.log);
+    expect(s.analytics.tally.book).toBe(truth.book + 1); // the replayed 'book' record counted twice
+  });
+  test('dedup ON: redelivering the last record is a no-op', () => {
+    const sim = makeSim();
+    boot(sim);
+    sim.external(DB, { cmd: 'write', key: 'p9', value: { title: 'spark rdd', category: 'book' } });
+    sim.runSteps(ADVANCE_EVERY * 30);
+    sim.external(DB, { cmd: 'toggle-dedup', view: 'analytics' });
+    sim.external(DB, { cmd: 'redeliver', view: 'analytics' });
+    // drain: one same-tick advance timer was already queued ahead of these two externals
+    // (lower seq at the same virtual time), then toggle-dedup, then redeliver
+    // (Simulation.external() only enqueues — see sim.ts). Fewer steps would leave redeliver
+    // unprocessed and pass this test trivially (nothing yet to double-count).
+    sim.runSteps(3);
+    const s = db(sim);
+    expect(s.analytics.tally).toEqual(deriveAnalytics(s.log)); // still exact
+  });
+  test('cache redelivery is naturally idempotent even without dedup', () => {
+    const sim = makeSim();
+    boot(sim);
+    sim.runSteps(ADVANCE_EVERY * 20);
+    const before = db(sim).cache.map;
+    sim.external(DB, { cmd: 'redeliver', view: 'cache' }); // last-write-wins → no change
+    // drain: one same-tick advance timer was already queued ahead of this external (lower
+    // seq at the same virtual time), then the redeliver command itself (Simulation.external()
+    // only enqueues — see sim.ts). Without this the assertion would pass trivially (the
+    // command never ran) since cache LWW re-apply is idempotent either way.
+    sim.runSteps(2);
+    expect(db(sim).cache.map).toEqual(before);
+  });
+});
