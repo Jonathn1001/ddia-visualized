@@ -51,6 +51,12 @@ export const OUTPUT_TICKS = 6; // final output write, both sides
 export const PING_EVERY = 20;
 export const DEAD_AFTER = 50; // silence threshold before JT declares a worker dead
 export const FETCH_RETRY = 30;
+// Dataflow stall watchdog: if a running attempt makes no progress for this long,
+// JT restarts it. Covers record loss from an INVISIBLE kill+revive (faster than
+// DEAD_AFTER) — the reducer's op survives but is permanently short, and pushed
+// records can't be re-driven. Comfortably above one df-start re-drive cycle
+// (PING_EVERY) so cheaply-recoverable stalls heal before a restart is spent.
+export const DF_STALL = 100;
 
 /** One partition file: per-URL counts from one split for one reducer. */
 export type PartFile = Partial<Record<Url, number>>;

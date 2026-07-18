@@ -8,7 +8,7 @@
 import type { NodeId } from '../engine/events';
 import type { Effect, InspectorTree, MetricSample, SimModule } from '../engine/module';
 import {
-  DEAD_AFTER, DISK_WRITE_TICKS, FETCH_RETRY, JT, MAP_EXEC_TICKS, MAP_RECORDS,
+  DEAD_AFTER, DF_STALL, DISK_WRITE_TICKS, FETCH_RETRY, JT, MAP_EXEC_TICKS, MAP_RECORDS,
   MAP_TASKS, OUTPUT_TICKS, PARTITION_OF, PING_EVERY, RECORD_COST,
   REDUCE_EXEC_RECORDS, REDUCE_TASKS, SPLITS, SPLIT_OF, WORKERS, mapPartitions,
   type BatchPayload, type BatchTimer, type DfMsg, type MapTaskId,
@@ -21,6 +21,15 @@ export interface TaskRow {
   attempt: number;
   /** Execution ticks reported (record-done) for the CURRENT attempt. */
   execTicks: number;
+  /**
+   * True once the assigned worker has reported ANY progress for the current
+   * attempt (record-done / fetched / map-done / reduce-done). Guards the ping
+   * re-drive: a running task on a live worker that has NOT acked is one whose
+   * assign message was dropped by a kill+revive too fast for the ping loop to
+   * declare the worker dead — JT re-sends the assign until the worker picks it
+   * up. An acked task is never re-sent (no re-run of a finished-but-unreported one).
+   */
+  acked: boolean;
 }
 
 export interface SchedState {
@@ -59,6 +68,8 @@ export interface SchedState {
     completionTick: number | null;
     output: [Url, number][];
     awaitingRevive: boolean;
+    /** Tick of the last df progress (exec/map-done/reduce-done); feeds the stall watchdog. */
+    lastProgressAt: number;
   };
 }
 
@@ -100,7 +111,20 @@ export interface WorkerState {
   id: NodeId;
   incarnation: number;
   mr: { run: MrRun | null; disk: Partial<Record<MapTaskId, [PartFile, PartFile]>> };
-  df: { attempt: number; reducerAt: Record<string, NodeId>; maps: DfMapOp[]; reduces: DfReduceOp[] };
+  df: {
+    attempt: number;
+    reducerAt: Record<string, NodeId>;
+    maps: DfMapOp[];
+    reduces: DfReduceOp[];
+    /**
+     * Shuffle messages (df-record / df-stream-close) that arrived BEFORE this
+     * worker processed its df-start for that attempt — the network reorders
+     * (latency 1..10), so a mapper's record can outrun the reducer's start.
+     * Buffered here and drained when df-start(attempt) creates the reduce ops,
+     * so no record is silently dropped.
+     */
+    pending: DfMsg[];
+  };
 }
 
 export type BatchState = SchedState | WorkerState;
@@ -146,7 +170,7 @@ type Ev = { kind: 'init' | 'message' | 'timer' | 'external'; self: NodeId; from?
 
 const TASK_ORDER: TaskId[] = ['m0', 'm1', 'm2', 'r0', 'r1'];
 
-const freshTaskRow = (): TaskRow => ({ status: 'waiting', worker: null, attempt: 0, execTicks: 0 });
+const freshTaskRow = (): TaskRow => ({ status: 'waiting', worker: null, attempt: 0, execTicks: 0, acked: false });
 
 /** Least-loaded live worker, ties to the lowest number — spec §2 placement. */
 function placeDf(live: NodeId[]): Partial<Record<TaskId, NodeId>> {
@@ -163,6 +187,17 @@ function placeDf(live: NodeId[]): Partial<Record<TaskId, NodeId>> {
   return placement;
 }
 
+/** Emit the assign message for a task JT already has as running on a worker. */
+function sendMrAssign(s: SchedState, task: TaskId, fx: Effect[]): void {
+  const row = s.mr.tasks[task];
+  if (!row.worker) return;
+  if (task === 'r0' || task === 'r1') {
+    fx.push({ type: 'send', to: row.worker, payload: { side: 'mr', kind: 'assign-reduce', task, attempt: row.attempt, sources: { ...s.mr.diskAt } } });
+  } else {
+    fx.push({ type: 'send', to: row.worker, payload: { side: 'mr', kind: 'assign-map', task: task as MapTaskId, attempt: row.attempt } });
+  }
+}
+
 /** MR: lowest-numbered idle live worker takes the lowest-numbered runnable task. */
 function scheduleMr(s: SchedState, fx: Effect[]): void {
   for (;;) {
@@ -175,15 +210,21 @@ function scheduleMr(s: SchedState, fx: Effect[]): void {
     row.status = 'running';
     row.worker = w;
     row.execTicks = 0;
-    if (task === 'r0' || task === 'r1') {
-      fx.push({ type: 'send', to: w, payload: { side: 'mr', kind: 'assign-reduce', task, attempt: row.attempt, sources: { ...s.mr.diskAt } } });
-    } else {
-      fx.push({ type: 'send', to: w, payload: { side: 'mr', kind: 'assign-map', task: task as MapTaskId, attempt: row.attempt } });
-    }
+    row.acked = false;
+    sendMrAssign(s, task, fx);
   }
 }
 
-function startDfAttempt(s: SchedState, fx: Effect[]): void {
+/** Send (or re-send) df-start for the CURRENT attempt to worker w, from placement. */
+function sendDfStart(s: SchedState, w: NodeId, fx: Effect[]): void {
+  const maps = MAP_TASKS.filter((m) => s.df.placement[m] === w);
+  const reduces = REDUCE_TASKS.filter((r) => s.df.placement[r] === w);
+  if (!maps.length && !reduces.length) return;
+  const reducerAt = { r0: s.df.placement.r0!, r1: s.df.placement.r1! } as Record<ReduceTaskId, NodeId>;
+  fx.push({ type: 'send', to: w, payload: { side: 'df', kind: 'df-start', attempt: s.df.attempt, maps, reduces, reducerAt } });
+}
+
+function startDfAttempt(s: SchedState, now: number, fx: Effect[]): void {
   const live = WORKERS.filter((w) => s.live[w]);
   if (live.length === 0) {
     s.df.awaitingRevive = true;
@@ -195,18 +236,9 @@ function startDfAttempt(s: SchedState, fx: Effect[]): void {
   s.df.mapsDone = [];
   s.df.reduceDone = [];
   s.df.output = [];
+  s.df.lastProgressAt = now; // fresh attempt — reset the stall clock
   s.df.placement = placeDf(live);
-  const reducerAt = {
-    r0: s.df.placement.r0!,
-    r1: s.df.placement.r1!,
-  } as Record<ReduceTaskId, NodeId>;
-  for (const w of live) {
-    const maps = MAP_TASKS.filter((m) => s.df.placement[m] === w);
-    const reduces = REDUCE_TASKS.filter((r) => s.df.placement[r] === w);
-    if (maps.length || reduces.length) {
-      fx.push({ type: 'send', to: w, payload: { side: 'df', kind: 'df-start', attempt: s.df.attempt, maps, reduces, reducerAt } });
-    }
-  }
+  for (const w of live) sendDfStart(s, w, fx);
 }
 
 /** All consequences of "w is dead", both branches. */
@@ -249,7 +281,7 @@ function declareDead(s: SchedState, w: NodeId, now: number, fx: Effect[]): void 
     if (heldReducer || heldRunningMap) {
       s.df.restarts += 1;
       s.df.wasted += s.df.execTicks; // per-worker running totals, snapshotted at restart
-      startDfAttempt(s, fx);
+      startDfAttempt(s, now, fx);
     }
   }
 }
@@ -297,13 +329,79 @@ function schedReduce(s: SchedState, ev: Ev, fx: Effect[]): void {
       for (const m of MAP_TASKS) s.mr.tasks[m].status = 'runnable';
       scheduleMr(s, fx);
       s.df.started = true;
-      startDfAttempt(s, fx);
+      startDfAttempt(s, ev.time, fx);
       return;
     }
     if (t.t === 'ping') {
       for (const w of WORKERS) {
         if (s.live[w] && ev.time - s.lastPong[w] > DEAD_AFTER) declareDead(s, w, ev.time, fx);
         fx.push({ type: 'send', to: w, payload: { kind: 'ping' } });
+      }
+      // Re-drive dropped messages after an INVISIBLE kill+revive — one faster
+      // than DEAD_AFTER, so the death check never fires (lastPong is fresh again
+      // once the worker is back) yet the kill still dropped whatever was in flight.
+      // MR: re-send the assign for any running task whose worker never acked
+      //     (idempotent worker-side, so a re-send to a worker already running it
+      //     is a no-op; a dropped assign is re-established).
+      for (const task of TASK_ORDER) {
+        const row = s.mr.tasks[task];
+        if (row.status === 'running' && row.worker && s.live[row.worker] && !row.acked) {
+          sendMrAssign(s, task, fx);
+        }
+      }
+      // MR: refresh running reducers' fetch sources against the authoritative
+      //     diskAt. A map that re-ran during a blackout relocates; a reducer that
+      //     wasn't reachable for the original map-relocated broadcast would keep
+      //     fetching a reset (empty) disk forever. map-relocated is idempotent.
+      for (const r of REDUCE_TASKS) {
+        const rr = s.mr.tasks[r];
+        if (rr.status === 'running' && rr.worker && s.live[rr.worker]) {
+          for (const mt of MAP_TASKS) {
+            const src = s.mr.diskAt[mt];
+            if (src) fx.push({ type: 'send', to: rr.worker, payload: { side: 'mr', kind: 'map-relocated', task: mt, worker: src } });
+          }
+        }
+      }
+      // MR: re-run a done map that a running reduce still needs but whose disk is
+      //     gone. When W died, its done-map outputs were dropped from diskAt but
+      //     only re-queued if a reduce needed them AT THAT MOMENT — a reduce that
+      //     was 'done' then (and later re-ran on a fresh attempt) wasn't counted,
+      //     so its now-needed map can be stranded 'done' with no disk. Re-queue it.
+      for (const r of REDUCE_TASKS) {
+        const rr = s.mr.tasks[r];
+        if (rr.status !== 'running') continue;
+        for (const mt of MAP_TASKS) {
+          const mrow = s.mr.tasks[mt];
+          if (!s.mr.fetched[r].includes(mt) && s.mr.diskAt[mt] === undefined && mrow.status === 'done') {
+            mrow.status = 'runnable';
+            mrow.worker = null;
+            mrow.attempt += 1;
+            mrow.execTicks = 0;
+            s.mr.lostAfterDone += 1;
+            s.mr.reexecuted += 1;
+            s.mr.wasted += MAP_EXEC_TICKS;
+          }
+        }
+      }
+      scheduleMr(s, fx); // assign anything the re-run above (or a prior death) left runnable
+      // DF: re-send the current attempt's df-start to every live placement
+      //     worker. The worker's monotonic guard ignores it unless the worker is
+      //     BEHIND (dropped its df-start); a behind worker adopts it and drains
+      //     any shuffle records it had buffered while unstarted. No restart, no
+      //     wasted ticks — the aborted-lineage machinery is only for real deaths.
+      if (s.df.started && s.df.completionTick === null && !s.df.awaitingRevive) {
+        for (const w of WORKERS) if (s.live[w]) sendDfStart(s, w, fx);
+        // Stall watchdog: an INVISIBLE kill can drop pushed records a reducer
+        // never re-requests (its op survives but stays short), so re-driving
+        // df-start can't heal it — only a restart re-streams from the input. Fire
+        // when no progress has landed for DF_STALL; the re-drive above heals the
+        // cheaply-recoverable stalls first, so this only spends a restart on true
+        // record loss.
+        if (ev.time - s.df.lastProgressAt > DF_STALL) {
+          s.df.restarts += 1;
+          s.df.wasted += s.df.execTicks;
+          startDfAttempt(s, ev.time, fx);
+        }
       }
       fx.push({ type: 'timer', delay: PING_EVERY, payload: { t: 'ping' } });
     }
@@ -318,7 +416,7 @@ function schedReduce(s: SchedState, ev: Ev, fx: Effect[]): void {
         // the worker has applied our reset — it is clean and back
         s.live[w] = true;
         scheduleMr(s, fx);
-        if (s.df.awaitingRevive) startDfAttempt(s, fx);
+        if (s.df.awaitingRevive) startDfAttempt(s, ev.time, fx);
       } else {
         fx.push({ type: 'send', to: w, payload: { kind: 'reset', incarnation: s.incarnation[w] } });
       }
@@ -331,12 +429,13 @@ function schedReduce(s: SchedState, ev: Ev, fx: Effect[]): void {
     switch (m.kind) {
       case 'record-done': {
         const row = s.mr.tasks[m.task];
-        if (m.attempt === row.attempt && row.status === 'running') row.execTicks += RECORD_COST;
+        if (m.attempt === row.attempt && row.status === 'running') { row.execTicks += RECORD_COST; row.acked = true; }
         break;
       }
       case 'map-done': {
         const row = s.mr.tasks[m.task];
         if (m.attempt !== row.attempt || row.status !== 'running') break;
+        row.acked = true;
         row.status = 'done';
         s.mr.diskAt[m.task] = w;
         s.mr.materialized += MAP_RECORDS;
@@ -357,12 +456,15 @@ function schedReduce(s: SchedState, ev: Ev, fx: Effect[]): void {
       }
       case 'fetched': {
         const rr = s.mr.tasks[m.reduce];
-        if (m.attempt === rr.attempt && !s.mr.fetched[m.reduce].includes(m.task)) s.mr.fetched[m.reduce].push(m.task);
+        if (m.attempt !== rr.attempt) break;
+        rr.acked = true;
+        if (!s.mr.fetched[m.reduce].includes(m.task)) s.mr.fetched[m.reduce].push(m.task);
         break;
       }
       case 'reduce-done': {
         const rr = s.mr.tasks[m.task];
         if (m.attempt !== rr.attempt || rr.status !== 'running') break;
+        rr.acked = true;
         rr.status = 'done';
         s.mr.output.push(...m.rows);
         if (REDUCE_TASKS.every((r) => s.mr.tasks[r].status === 'done')) {
@@ -384,15 +486,19 @@ function schedReduce(s: SchedState, ev: Ev, fx: Effect[]): void {
   }
   const d = p as DfMsg;
   if (d.attempt !== s.df.attempt) return; // stale attempt — aborted lineage
+  // Only GENUINE forward progress resets the stall watchdog — never a duplicate
+  // re-send (e.g. a completed reducer's ping self-heal re-emitting df-reduce-done),
+  // which would otherwise keep the clock fresh forever and mask a real stall.
   switch (d.kind) {
     case 'df-progress':
-      if (s.df.completionTick === null) s.df.execTicks += RECORD_COST;
+      if (s.df.completionTick === null) { s.df.execTicks += RECORD_COST; s.df.lastProgressAt = ev.time; }
       break;
     case 'df-map-done':
-      if (!s.df.mapsDone.includes(d.task)) s.df.mapsDone.push(d.task);
+      if (!s.df.mapsDone.includes(d.task)) { s.df.mapsDone.push(d.task); s.df.lastProgressAt = ev.time; }
       break;
     case 'df-reduce-done':
       if (!s.df.reduceDone.includes(d.task)) {
+        s.df.lastProgressAt = ev.time;
         s.df.reduceDone.push(d.task);
         s.df.output.push(...d.rows);
         if (s.df.reduceDone.length === REDUCE_TASKS.length) {
@@ -412,6 +518,23 @@ function armMrChain(s: WorkerState, delay: number, timer: BatchTimer, now: numbe
     s.mr.run.nonce += 1;
     s.mr.run.expectedFireAt = now + delay;
     fx.push({ type: 'timer', delay, payload: { ...timer, nonce: s.mr.run.nonce } });
+  }
+}
+
+/** Fold one shuffle message (df-record / df-stream-close) for the CURRENT attempt into its reduce op. */
+function applyDfShuffle(s: WorkerState, d: DfMsg, now: number, fx: Effect[]): void {
+  if (d.kind === 'df-record') {
+    const op = s.df.reduces.find((o) => o.task === (PARTITION_OF[d.url] === 0 ? 'r0' : 'r1'));
+    if (!op) return;
+    op.agg[d.url] = (op.agg[d.url] ?? 0) + 1;
+    op.receivedFrom[d.from] = (op.receivedFrom[d.from] ?? 0) + 1;
+    maybeArmDfOutput(s, op, now, fx);
+  } else if (d.kind === 'df-stream-close') {
+    const op = s.df.reduces.find((o) => o.task === d.reduce);
+    if (op && op.closedAt[d.from] === undefined) {
+      op.closedAt[d.from] = d.sent;
+      maybeArmDfOutput(s, op, now, fx);
+    }
   }
 }
 
@@ -555,7 +678,7 @@ function workerReduce(s: WorkerState, ev: Ev, fx: Effect[]): void {
   if ('kind' in p && p.kind === 'reset') {
     s.incarnation = p.incarnation;
     s.mr = { run: null, disk: {} }; // empty local disk — the spec's revive rule
-    s.df = { attempt: 0, reducerAt: {}, maps: [], reduces: [] };
+    s.df = { attempt: 0, reducerAt: {}, maps: [], reduces: [], pending: [] };
     fx.push({ type: 'send', to: JT, payload: { kind: 'pong', incarnation: s.incarnation } });
     return;
   }
@@ -564,11 +687,21 @@ function workerReduce(s: WorkerState, ev: Ev, fx: Effect[]): void {
     const m = p as MrMsg;
     switch (m.kind) {
       case 'assign-map': {
+        // Idempotent re-assign (JT's ping re-drive): already have the output on
+        // disk → just re-report map-done (a lost map-done is being re-driven);
+        // already executing this exact attempt → ignore. Otherwise (re)start it.
+        if (s.mr.disk[m.task]) {
+          fx.push({ type: 'send', to: JT, payload: { side: 'mr', kind: 'map-done', task: m.task, attempt: m.attempt } });
+          break;
+        }
+        if (s.mr.run && s.mr.run.task === m.task && s.mr.run.attempt === m.attempt) break;
         s.mr.run = { task: m.task, attempt: m.attempt, phase: 'exec', recordsDone: 0, recordsTotal: MAP_RECORDS, sources: {}, fetchedFiles: {}, nonce: 0, expectedFireAt: 0 };
         armMrChain(s, RECORD_COST, { t: 'mr-record', task: m.task, attempt: m.attempt, nonce: 0 }, now, fx);
         break;
       }
       case 'assign-reduce': {
+        // Idempotent re-assign: already fetching/executing this exact attempt → ignore.
+        if (s.mr.run && s.mr.run.task === m.task && s.mr.run.attempt === m.attempt) break;
         s.mr.run = { task: m.task, attempt: m.attempt, phase: 'fetch', recordsDone: 0, recordsTotal: REDUCE_EXEC_RECORDS[m.task], sources: { ...m.sources }, fetchedFiles: {}, nonce: 0, expectedFireAt: 0 };
         for (const mt of MAP_TASKS) {
           const src = m.sources[mt];
@@ -614,33 +747,30 @@ function workerReduce(s: WorkerState, ev: Ev, fx: Effect[]): void {
     // the same worker; if the stale N lands last, an unguarded overwrite would
     // strand the worker on a lineage JT already abandoned. Only ever move forward.
     if (d.attempt <= s.df.attempt) return;
+    const buffered = s.df.pending; // shuffle msgs that outran this start (network reorder)
     s.df = {
       attempt: d.attempt,
       reducerAt: d.reducerAt,
       maps: d.maps.map((task) => ({ task, cursor: 0, done: false, sentTo: {}, nonce: 0, expectedFireAt: 0 })),
       reduces: d.reduces.map((task) => ({ task, agg: {}, receivedFrom: {}, closedAt: {}, outputArmed: false, nonce: 0, expectedFireAt: 0 })),
+      pending: [],
     };
     for (const op of s.df.maps) {
       op.nonce += 1;
       op.expectedFireAt = now + RECORD_COST;
       fx.push({ type: 'timer', delay: RECORD_COST, payload: { t: 'df-record', task: op.task, attempt: d.attempt, nonce: op.nonce } });
     }
+    // Drain what arrived early: fold this attempt's buffered records/closes now;
+    // keep any for an even-newer attempt; drop stale ones.
+    for (const bm of buffered) {
+      if (bm.attempt === d.attempt) applyDfShuffle(s, bm, now, fx);
+      else if (bm.attempt > d.attempt) s.df.pending.push(bm);
+    }
     return;
   }
-  if (d.attempt !== s.df.attempt) return; // stale lineage from an aborted attempt
-  if (d.kind === 'df-record') {
-    const op = s.df.reduces.find((o) => o.task === (PARTITION_OF[d.url] === 0 ? 'r0' : 'r1'));
-    if (!op) return;
-    op.agg[d.url] = (op.agg[d.url] ?? 0) + 1;
-    op.receivedFrom[d.from] = (op.receivedFrom[d.from] ?? 0) + 1;
-    maybeArmDfOutput(s, op, now, fx);
-  } else if (d.kind === 'df-stream-close') {
-    const op = s.df.reduces.find((o) => o.task === d.reduce);
-    if (op && op.closedAt[d.from] === undefined) {
-      op.closedAt[d.from] = d.sent;
-      maybeArmDfOutput(s, op, now, fx);
-    }
-  }
+  if (d.attempt > s.df.attempt) { s.df.pending.push(d); return; } // arrived before our df-start — buffer
+  if (d.attempt < s.df.attempt) return; // stale lineage from an aborted attempt
+  applyDfShuffle(s, d, now, fx);
 }
 
 // batch.ts (continued) — module wiring
@@ -665,14 +795,14 @@ export const batch: SimModule<BatchState, BatchPayload> = {
         df: {
           started: false, attempt: 0, placement: {}, execTicks: 0,
           mapsDone: [], reduceDone: [], restarts: 0, wasted: 0,
-          completionTick: null, output: [], awaitingRevive: false,
+          completionTick: null, output: [], awaitingRevive: false, lastProgressAt: 0,
         },
       } satisfies SchedState;
     }
     return {
       role: 'worker', id: nodeId, incarnation: 0,
       mr: { run: null, disk: {} },
-      df: { attempt: 0, reducerAt: {}, maps: [], reduces: [] },
+      df: { attempt: 0, reducerAt: {}, maps: [], reduces: [], pending: [] },
     } satisfies WorkerState;
   },
 
