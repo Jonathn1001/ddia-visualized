@@ -1475,7 +1475,7 @@ Mechanics (RaftLab is the template — driver-in-effect keyed `[epoch]`, `useSim
   3. `ddia:ch10:damage` — "Same kill, unequal damage": win when `killedWhileBoth && jt.mr.completionTick !== null && jt.df.completionTick !== null && jt.df.wasted > jt.mr.wasted`. Hint: one kill while both panels are busy, then let both finish and compare the wasted counters.
 - Smoke tests (jsdom): renders two panels (`[data-side="mr"]` and `[data-side="df"]`) + 3 challenges; `run job` disables after click and JT's `started` flips after stepping; kill button via ChaosToolbar reaches the driver (dead chip appears after stepping past the declaration); challenge panels present by title.
 
-- [ ] **Steps: TDD → GREEN + eslint + tsc + full suite (`npx vitest run`). Commit** — `feat(ui): BatchLab — twin panels, run-job epoch discipline, 3 recovery challenges`
+- [x] **Steps: TDD → GREEN + eslint + tsc + full suite (`npx vitest run`). Commit** — `feat(ui): BatchLab — twin panels, run-job epoch discipline, 3 recovery challenges` (commit `df1e29f`; 5 smoke tests, suite 447 green; browser-verify pending Task 10 wiring)
 
 ---
 
