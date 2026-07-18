@@ -233,3 +233,31 @@ test('same kill, unequal damage: a restart-triggering kill wastes more dataflow 
   until(sim, () => jt(sim).mr.completionTick !== null && jt(sim).df.completionTick !== null, 60000);
   expect(jt(sim).df.wasted).toBeGreaterThan(jt(sim).mr.wasted);
 }, 30_000);
+
+// --- Task 5: inspect + metrics panel contract ---
+
+test('inspect exposes the twin-panel contract', () => {
+  const sim = fresh(10041);
+  runJob(sim);
+  until(sim, () => jt(sim).mr.completionTick !== null && jt(sim).df.completionTick !== null);
+  const si = batch.inspect(jt(sim)) as unknown as { mr: { counters: Record<string, number | null> }; df: { counters: Record<string, number | null> } };
+  expect(si.mr.counters.materialized).toBe(24);
+  expect(si.df.counters.materialized).toBe(0);
+  expect(si.mr.counters.restarts).toBe(0);
+  expect(si.df.counters.completionTick).not.toBeNull();
+  const wi = batch.inspect(wk(sim, 'W1')) as unknown as { role: string; mr: { diskFiles: string[] }; df: { reduces: unknown[] } };
+  expect(wi.role).toBe('worker');
+  expect(Array.isArray(wi.mr.diskFiles)).toBe(true);
+}, 30_000);
+
+test('metrics: both columns, six counters each, completion ticks appear once done', () => {
+  const sim = fresh(10042);
+  runJob(sim);
+  until(sim, () => jt(sim).mr.completionTick !== null && jt(sim).df.completionTick !== null);
+  const states = new Map(BATCH_NODES.map((n) => [n, sim.getState(n)] as const));
+  const names = batch.metrics(states, sim.time).map((m) => m.name);
+  expect(names).toEqual(expect.arrayContaining([
+    'mr/materialized', 'mr/shuffle', 'mr/reexec', 'mr/wasted', 'mr/done',
+    'df/restarts', 'df/shuffle', 'df/wasted', 'df/done',
+  ]));
+}, 30_000);

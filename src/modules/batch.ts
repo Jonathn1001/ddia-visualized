@@ -105,6 +105,43 @@ export interface WorkerState {
 
 export type BatchState = SchedState | WorkerState;
 
+// --- Panel contract: StagePanel/BatchLab read ONLY these shapes, never module internals ---
+
+export interface BatchSideCounters {
+  materialized: number;   // always 0 on df
+  shuffleInFlight: number;
+  reexecuted: number;     // df: 0 (restart is the df failure mode)
+  restarts: number;       // mr: 0
+  lostAfterDone: number;  // mr-only (done-but-unfetched maps lost to disk death); 0 on df
+  wasted: number;
+  completionTick: number | null;
+}
+export interface BatchSchedInspect {
+  role: 'sched';
+  live: Record<string, boolean>;
+  mr: {
+    phase: SchedState['mr']['phase'];
+    tasks: Record<TaskId, { status: TaskRow['status']; worker: NodeId | null; attempt: number }>;
+    counters: BatchSideCounters;
+    output: [Url, number][];
+  };
+  df: {
+    attempt: number;
+    placement: Partial<Record<TaskId, NodeId>>;
+    mapsDone: MapTaskId[];
+    reduceDone: ReduceTaskId[];
+    awaitingRevive: boolean;
+    counters: BatchSideCounters;
+    output: [Url, number][];
+  };
+}
+export interface BatchWorkerInspect {
+  role: 'worker';
+  id: NodeId;
+  mr: { task: TaskId | null; phase: MrRun['phase'] | null; recordsDone: number; recordsTotal: number; diskFiles: MapTaskId[] };
+  df: { maps: { task: MapTaskId; cursor: number; done: boolean }[]; reduces: { task: ReduceTaskId; folded: number; closed: number }[] };
+}
+
 type Ev = { kind: 'init' | 'message' | 'timer' | 'external'; self: NodeId; from?: NodeId; time: number; payload: BatchPayload };
 
 const TASK_ORDER: TaskId[] = ['m0', 'm1', 'm2', 'r0', 'r1'];
@@ -647,11 +684,66 @@ export const batch: SimModule<BatchState, BatchPayload> = {
     return [s, fx];
   },
 
-  metrics(): MetricSample[] {
-    return []; // Task 5
+  metrics(states): MetricSample[] {
+    const s = [...states.values()].find((x): x is SchedState => x.role === 'sched');
+    if (!s) return [];
+    const mrShuffle = REDUCE_TASKS.reduce(
+      (acc, r) => acc + (s.mr.tasks[r].status === 'running' ? MAP_TASKS.length - s.mr.fetched[r].length : 0), 0);
+    const dfRunning = s.df.started && s.df.completionTick === null && !s.df.awaitingRevive;
+    const out: MetricSample[] = [
+      { name: 'mr/materialized', value: s.mr.materialized },
+      { name: 'mr/shuffle', value: mrShuffle },
+      { name: 'mr/reexec', value: s.mr.reexecuted },
+      { name: 'mr/wasted', value: s.mr.wasted },
+      { name: 'df/restarts', value: s.df.restarts },
+      { name: 'df/shuffle', value: dfRunning ? MAP_TASKS.length - s.df.mapsDone.length : 0 },
+      { name: 'df/wasted', value: s.df.wasted },
+    ];
+    if (s.mr.completionTick !== null) out.push({ name: 'mr/done', value: s.mr.completionTick });
+    if (s.df.completionTick !== null) out.push({ name: 'df/done', value: s.df.completionTick });
+    return out;
   },
 
   inspect(state) {
-    return { role: state.role } as unknown as InspectorTree; // Task 5
+    if (state.role === 'sched') {
+      const counters = (side: 'mr' | 'df'): BatchSideCounters => ({
+        materialized: side === 'mr' ? state.mr.materialized : 0,
+        shuffleInFlight: 0, // panel uses metrics for the live gauge; inspect carries the rest
+        reexecuted: side === 'mr' ? state.mr.reexecuted : 0,
+        restarts: side === 'df' ? state.df.restarts : 0,
+        lostAfterDone: side === 'mr' ? state.mr.lostAfterDone : 0,
+        wasted: state[side].wasted,
+        completionTick: state[side].completionTick,
+      });
+      const tasks = Object.fromEntries(
+        (Object.entries(state.mr.tasks) as [TaskId, TaskRow][]).map(([t, row]) => [t, { status: row.status, worker: row.worker, attempt: row.attempt }]),
+      ) as BatchSchedInspect['mr']['tasks'];
+      return {
+        role: 'sched', live: state.live,
+        mr: { phase: state.mr.phase, tasks, counters: counters('mr'), output: state.mr.output },
+        df: {
+          attempt: state.df.attempt, placement: state.df.placement, mapsDone: state.df.mapsDone,
+          reduceDone: state.df.reduceDone, awaitingRevive: state.df.awaitingRevive,
+          counters: counters('df'), output: state.df.output,
+        },
+      } as unknown as InspectorTree;
+    }
+    const run = state.mr.run;
+    return {
+      role: 'worker', id: state.id,
+      mr: {
+        task: run?.task ?? null, phase: run?.phase ?? null,
+        recordsDone: run?.recordsDone ?? 0, recordsTotal: run?.recordsTotal ?? 0,
+        diskFiles: Object.keys(state.mr.disk),
+      },
+      df: {
+        maps: state.df.maps.map((o) => ({ task: o.task, cursor: o.cursor, done: o.done })),
+        reduces: state.df.reduces.map((o) => ({
+          task: o.task,
+          folded: Object.values(o.agg).reduce((a, b) => a + (b as number), 0),
+          closed: Object.keys(o.closedAt).length,
+        })),
+      },
+    } as unknown as InspectorTree;
   },
 };
