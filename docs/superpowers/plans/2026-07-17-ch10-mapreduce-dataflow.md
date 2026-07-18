@@ -1404,7 +1404,7 @@ test('(d) determinism: same script + seed → identical states', () => {
 
 **Files:** `src/modules/batch-lesson.test.ts` — deterministic challenge-matrix choreography. Inline its own `fresh`/`jt`/`until`/`runJob` helpers (do NOT import from batch.test.ts).
 
-- [ ] **Step 1: Write** — two scenarios, each its own sim, both asserted clause by clause (this is the challenge-verifier contract):
+- [x] **Step 1: Write** — two scenarios, each its own sim, both asserted clause by clause (this is the challenge-verifier contract):
 
 **Scenario A — rerun + damage (challenges 1 and 3), seed 10042:**
 1. `runJob`; `until jt.mr.tasks.m0.status === 'running' && jt.df.execTicks > 0` (both jobs mid-flight). By construction the victim is W1: MR's lowest-idle rule assigns `m0 → W1`, and df placement pins `r0 → W1` — so killing W1 hits a running MR map AND live dataflow reducer state in one stroke.
@@ -1421,7 +1421,7 @@ test('(d) determinism: same script + seed → identical states', () => {
 
 Use `≥/>` assertions, not magic totals — deterministic seeds keep the path stable, the comparisons keep the test honest. 30_000 timeouts.
 
-- [ ] **Step 2: Run; fix real bugs. Commit** — `test(modules): pin the Ch10 lesson — rerun, done-isnt-safe, unequal damage`
+- [x] **Step 2: Run; fix real bugs. Commit** — `test(modules): pin the Ch10 lesson — rerun, done-isnt-safe, unequal damage` (commit `56747ed`; green on first write, no bugs)
 
 ---
 
