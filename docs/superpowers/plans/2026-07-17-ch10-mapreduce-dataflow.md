@@ -1451,8 +1451,8 @@ Layout (theme tokens, monospace, `overflow-x-auto` wrapper):
 - Shuffle SVG (`data-shuffle-svg`): fixed 3-column geometry (worker x-positions), each dot a `<circle data-dot>` positioned by linear interpolation `from → to` at `frac`.
 - Output table (`data-output`): rows `data-output-row` from `sched[side].output`, or a `text-dim` "no output yet" placeholder.
 
-- [ ] **Step 1: Tests** — jsdom, fixtures: a sched inspect mid-reduce (r0 running, m1 lost — `data-status` assertions), workers with disk files, one dead worker, two dots, an output fixture. Assert: `data-side`, chips + statuses, disk row present on mr and ABSENT on df (`container.querySelector('[data-disk-row]')` null), dead dimming, dot count, output rows.
-- [ ] **Step 2: Implement** per the interface. **Step 3: GREEN + eslint + tsc. Commit** — `feat(ui): StagePanel — stage lanes, worker chips, MR disk row, shuffle dots, output table`
+- [x] **Step 1: Tests** — jsdom, fixtures: a sched inspect mid-reduce (r0 running, m1 lost — `data-status` assertions), workers with disk files, one dead worker, two dots, an output fixture. Assert: `data-side`, chips + statuses, disk row present on mr and ABSENT on df (`container.querySelector('[data-disk-row]')` null), dead dimming, dot count, output rows.
+- [x] **Step 2: Implement** per the interface. **Step 3: GREEN + eslint + tsc. Commit** — `feat(ui): StagePanel — stage lanes, worker chips, MR disk row, shuffle dots, output table` (commit `d1e5742`; 13 jsdom tests; ShuffleDot is StagePanel-local; SVG uses var(--color-*) theme tokens)
 
 ---
 
