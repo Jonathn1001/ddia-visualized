@@ -1,0 +1,133 @@
+# Chapter 12 — The Future of Data Systems: Debrief
+
+## The log is the source of truth; views are disposable
+
+One node, one write path: every `write` lands as the next offset in an
+append-only log — nothing else. The search index, the cache, and the
+analytics tally never receive that write directly. Each one is a **derived
+view**, consuming the log at its own pace and re-deriving its own content
+from records it has already seen. That asymmetry is the whole chapter: the
+log is the one copy that has to survive, because it is the only place the
+original write actually happened. The three views are projections of it —
+convenient, queryable, and, because they hold no information the log
+doesn't already have, entirely disposable. You spent this lab breaking each
+of them on purpose and watching nothing important get lost.
+
+## The lag you watched
+
+Pausing Search and writing a fresh key produced an immediate split: the log
+had the record the instant `write` returned, but the index — built by an
+`advance` timer consuming the log a record at a time — did not. Querying for
+a word from that title came back a **miss**, even though the data existed.
+That's a **read-your-writes (RYW)** anomaly: you wrote it, then failed to
+read it back through a view that hadn't caught up yet. Resuming let the
+timer replay the record it missed, and the exact same query then hit. Notice
+what didn't happen: the index was never *wrong*. It just hadn't gotten
+there yet. This generalizes past this one lab — any architecture that
+separates the write path from a materialized read path (a cache, a search
+index, a read replica) buys throughput and query shape at the cost of a
+window where the view lags the log. Derived data is not eventually
+consistent as a bug to be fixed; it's **eventually consistent by
+construction**, because "derived" means "computed from the log after the
+fact," and after-the-fact takes time.
+
+## Rebuild: the log replaces backups
+
+Wiping the Cache view zeroed its map and reset its offset to 0 — and cost
+nothing. The cache never held any information the log didn't already have,
+so destroying it destroyed no information; the log itself never moved.
+Stepping the simulation forward just replayed the log from offset 0, and by
+the time the cache's offset caught back up to head, its contents were
+byte-identical to a fresh derivation straight off the log. That's the
+practical payoff of "the log is the source of truth": you don't need a
+backup of the cache, because the log already *is* the backup, for every view
+that can be recomputed from it. Real systems lean on exactly this property.
+**Kafka log compaction** keeps this cheap forever by retaining only the
+latest record per key instead of every record ever written — a compacted
+topic is small enough to replay in full, on demand, and still reconstructs
+the same latest-value-per-key state this lab's cache derives. **Kafka
+Streams** and **Samza** both build **local state stores** next to a stream
+processor and treat them exactly like this lab's cache: if a worker dies and
+its local state disk goes with it, the replacement doesn't restore from a
+snapshot — it replays the input topic (or the store's own changelog topic)
+from the beginning and rebuilds the state store from scratch. Rebuild-from-log
+is not this lab's shortcut; it's the production pattern.
+
+## Exactly-once lives at the endpoint, not the pipe
+
+With dedup off, redelivering the last record to Analytics pushed its tally
+past the log's true count — the view has no way to tell "this is a retry"
+from "this is new," so it aggregated the same record twice. That's the
+honest default for any at-least-once delivery path: a crash-and-retry can
+always duplicate, and once a monotonic counter has counted something twice,
+there is no way to subtract your way back to correct — you had to wipe and
+rebuild from the log to erase the corruption. Turning dedup on and
+redelivering again left the tally exact, because the redeliver path now
+checks the record's **offset** against what that view has already applied
+and skips the replay it recognizes. That's **idempotence keyed on the
+offset**: the guarantee isn't "the network promises to deliver exactly
+once" — no network can promise that — it's "the endpoint recognizes a
+duplicate and refuses to apply it twice." This is a live instance of the
+**end-to-end argument**: a guarantee that must hold globally (correctness of
+data derived from a stream) cannot be fully discharged by a layer in the
+middle (delivery, transport, brokers) — only the endpoint that actually
+holds the state being mutated has enough information to detect and reject a
+duplicate. Middleware can reduce how often duplicates happen; it can never
+make the endpoint's own bookkeeping unnecessary.
+
+## The named cuts
+
+This lab is a single node standing in for a whole class of distributed
+infrastructure, and several real complications are cut on purpose:
+
+- **Multi-partition ordering** — the log here is one totally-ordered
+  sequence on one node. Real systems partition the log across brokers, and
+  a consumer only gets ordering guarantees *within* a partition, never
+  across them.
+- **XA / distributed transactions** — nothing here coordinates a write
+  across the log and an external system with two-phase commit. The log
+  itself is the only thing being written to.
+- **Real index internals** — the search view is a plain in-memory inverted
+  index (`term -> keys`), not a segment-based, merge-on-write structure like
+  Lucene's. It demonstrates the lag and rebuild story, not index engineering.
+- **Backpressure** — each view's `advance` timer fires on a fixed cadence
+  regardless of how far behind it is. A real consumer that can't keep up
+  would need to signal the producer or the broker to slow down; this lab
+  just lets the lag grow.
+- **Log-compaction mechanics** — the debrief above describes *what*
+  compaction buys you; this lab's log is never actually compacted (nothing
+  is deleted, ever), so the tombstones, cleaner threads, and segment merging
+  that make compaction work are entirely out of scope.
+- **Schema evolution** — every record in this lab's log has the same shape
+  forever. Real logs accumulate years of records written under different
+  schema versions, which is the entire subject of Ch4's encoding formats.
+- **Secondary indexes** — the search view is the only index-shaped view
+  here; multiple, overlapping secondary indexes over the same log (each
+  with its own lag) are common in production but not modeled.
+
+## Real systems
+
+**Debezium** and **Kafka Connect** implement the write side of this whole
+picture as **change data capture (CDC)**: they tail a database's own
+write-ahead log and turn every row change into a message on a Kafka topic,
+so the database itself becomes the "log" this lab modeled, without the
+application ever writing to Kafka directly. **Kafka Streams** and
+**Samza** are the consuming side — stream processors that build derived
+views (aggregations, joins, materialized state) directly out of that log,
+each with the same local-state-store rebuild story as this lab's cache.
+**Materialize** takes the idea furthest: it's a database whose *only* tables
+are materialized views defined as SQL over streaming input, incrementally
+maintained as new records arrive — exactly this lab's "view lags the log,
+catches up automatically" model, generalized to arbitrary SQL instead of
+three hand-built views.
+
+## Terms
+
+- **changelog** — the append-only record of every change to a piece of state, from which any derived view can be rebuilt.
+- **derived data** — data computed from other data (here, from the log) rather than written directly; disposable because it's redundant.
+- **materialized view** — a derived view's *contents* at a point in its consumption of the log — a cached, queryable answer, not the source of truth.
+- **log compaction** — retaining only the latest record per key in a log instead of every record ever written, so a full replay stays cheap forever.
+- **idempotence** — an operation that has the same effect whether applied once or many times; the property that makes a safe redelivery possible.
+- **offset** — a record's position in the log; the coordinate a view's "how far have I consumed" and a redelivery's "have I already applied this" are both keyed on.
+- **read-your-writes (RYW)** — the expectation that a read immediately following your own write reflects it; violated whenever you read through a view that lags the write path.
+- **end-to-end argument** — a guarantee needed by an application can only be fully implemented by the endpoints that hold the relevant state, not by a layer in the middle, even though the middle layer can make failures rarer.

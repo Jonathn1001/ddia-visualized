@@ -68,6 +68,13 @@ test('redis broker flow renders its own challenge from the sidebar', () => {
 test('broker debrief renders from the sidebar', () => {
   render(<App />);
   const debriefs = screen.getAllByText('Debrief & Journal');
-  fireEvent.click(debriefs[debriefs.length - 1]); // ch11 debrief is the last in book order
+  fireEvent.click(debriefs[debriefs.length - 2]); // ch11 debrief is second-to-last in book order
   expect(screen.getByText('Storage decides delivery', { selector: 'h1' })).toBeTruthy();
+});
+
+test('unbundled-database debrief renders from the sidebar', () => {
+  render(<App />);
+  const debriefs = screen.getAllByText('Debrief & Journal');
+  fireEvent.click(debriefs[debriefs.length - 1]); // ch12 debrief is the last in book order
+  expect(screen.getByText('The log is the source of truth', { selector: 'h1' })).toBeTruthy();
 });

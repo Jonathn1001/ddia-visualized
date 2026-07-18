@@ -24,6 +24,8 @@ import { RaftLab } from './labs/raft/RaftLab';
 import { RaftDebrief } from './labs/raft/Debrief';
 import { BatchLab } from './labs/batch/BatchLab';
 import { BatchDebrief } from './labs/batch/Debrief';
+import { UnbundledLab } from './labs/unbundled/UnbundledLab';
+import { UnbundledDebrief } from './labs/unbundled/Debrief';
 
 interface Page {
   eyebrow: string;
@@ -179,6 +181,20 @@ const PAGES: Record<string, Omit<Page, 'body'> & { Component: () => ReactNode }>
     thesis:
       'Why the same workload duplicated, redelivered, and vanished across three brokers — and why exactly-once is something you build on top, never something the broker hands you.',
     Component: BrokersDebrief,
+  },
+  '12.1': {
+    eyebrow: 'Chapter 12 — The Future of Data Systems',
+    title: 'Unbundled Database',
+    thesis:
+      'One write lands in an append-only log, then fans out to a search index, a cache, and an analytics counter — each consuming the log at its own pace. Pause a view and write, and its query lies by omission; wipe a view and the log rebuilds it byte-for-byte; redeliver a record and watch the counter double unless you dedup on the offset. Derived data is a disposable projection of the log.',
+    Component: UnbundledLab,
+  },
+  '12.d': {
+    eyebrow: 'Chapter 12 — Debrief',
+    title: 'The log is the source of truth',
+    thesis:
+      'Why every derived view lags, why you can throw any of them away, and where exactly-once actually lives — at the endpoint, keyed on the offset.',
+    Component: UnbundledDebrief,
   },
   '4.1': {
     eyebrow: 'Chapter 4 — Encoding & Evolution',

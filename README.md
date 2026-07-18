@@ -10,7 +10,7 @@ Design: [`docs/DESIGN_PLAN.en.md`](docs/DESIGN_PLAN.en.md) (canonical; Vietnames
 
 ## Status
 
-**Nine chapters live — sixteen interactive labs.**
+**Ten chapters live — seventeen interactive labs.**
 
 **Ch.3 — Storage Engines:**
 - **3.1 LSM-Tree vs B-Tree** — the same keys drive both engines side-by-side; memtable → SSTable flush → compaction with bloom filters next to a page-splitting B-tree, and a write/read/space amplification scoreboard. Challenges: *crash mid-write — what does the WAL save?*, *disk-full — compaction stalls vs the split is refused*, *torn write — detect the corruption*.
@@ -45,6 +45,10 @@ Design: [`docs/DESIGN_PLAN.en.md`](docs/DESIGN_PLAN.en.md) (canonical; Vietnames
 - **11.1 Kafka Log** — replayable log, offset commits, session-timeout replay. Challenge: *make the group process a message twice*.
 - **11.2 RabbitMQ Queue** — destructive queue, per-message acks, ack-timeout redelivery + dead-letter. Challenge: *resurrect a message on the survivor*.
 - **11.3 Redis Pub/Sub** — fan-out, fire-and-forget, no storage. Challenge: *lose a message forever*.
+
+**Ch.12 — The Future of Data Systems:**
+- **12.1 Unbundled Database** — one append-only log, three lagging derived views (search index / cache / analytics tally). Challenges: *the read-your-writes miss (pause a view, write, query it stale)*, *wipe the cache — the log rebuilds it byte-for-byte*, *redeliver a record and dedup on the offset to keep exactly-once*.
+- **12.d The log is the source of truth** — why every derived view lags, why any of them can be thrown away and rebuilt, and where exactly-once actually lives — idempotence keyed on the offset, the end-to-end argument in miniature.
 
 Each chapter ends in a **Debrief & Journal** page.
 

@@ -123,6 +123,9 @@ export const CATALOG: Chapter[] = [
   {
     id: 'ch12',
     title: 'Ch.12 — Future of Data Systems',
-    labs: [{ id: '12.1', label: 'Unbundled Database', status: 'soon' }],
+    labs: [
+      { id: '12.1', label: 'Unbundled Database', status: 'active' },
+      { id: '12.d', label: 'Debrief & Journal', status: 'active' },
+    ],
   },
 ];

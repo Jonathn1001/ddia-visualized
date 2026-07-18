@@ -165,7 +165,7 @@ Chaos vocabulary tách hai họ: **network chaos** (kill node, partition, delay/
 
 **Phase 4 — Transactions: Chương 7 (2–3 tuần).** Isolation anomaly lab với timeline kéo-thả.
 
-**Phase 5 — Data flow: Chương 10, 11, 12 + Chương 1, 2, 4 (4 tuần).** Kết bằng lab "unbundled database" ghép tất cả lại.
+**Phase 5 — Data flow: Chương 10, 11, 12 + Chương 1, 2, 4 (4 tuần).** Kết bằng lab "unbundled database" ghép tất cả lại. *(ch12 shipped 2026-07-18 — 12.1 Unbundled Database: one write → append-only log → three lagging derived views [search index / cache / analytics]; single-node authoritative model; the three challenges are stale-read/RYW, rebuild-from-log, and exactly-once-via-offset-dedup — all engine-verified by the property + pinned-lesson suites. Phase 5 complete.)*
 
 Nhịp làm việc gợi ý: **đọc chương → viết ghi chú → build lab của chương đó**. Việc build chính là active recall mạnh nhất — bạn không thể code Raft election nếu chưa thực sự hiểu nó, và mọi lỗ hổng hiểu biết sẽ lộ ra ngay khi test fail.
 

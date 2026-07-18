@@ -36,3 +36,9 @@ test('ch10 ships the twin batch lab + debrief, all active', () => {
   expect(ch10.labs.map((l) => l.id)).toEqual(['10.1', '10.d']);
   expect(ch10.labs.every((l) => l.status === 'active')).toBe(true);
 });
+
+test('ch12 ships the unbundled-database lab + debrief, all active', () => {
+  const ch12 = CATALOG.find((c) => c.id === 'ch12')!;
+  expect(ch12.labs.map((l) => l.id)).toEqual(['12.1', '12.d']);
+  expect(ch12.labs.every((l) => l.status === 'active')).toBe(true);
+});
