@@ -994,7 +994,7 @@ git commit -m "feat(modules): Ch10 twin batch engine — MR barrier+disk+shuffle
 
 **Files:** `src/modules/batch.test.ts` (append; module fixes only for real bugs)
 
-- [ ] **Step 1: Append**
+- [x] **Step 1: Append**
 
 ```ts
 // append to src/modules/batch.test.ts
@@ -1075,9 +1075,9 @@ test('one worker is enough: kill two workers and both jobs still finish, output 
 
 Add `EXPECTED_COUNTS` to the existing import from `./batch-shared`.
 
-- [ ] **Step 2: Run.** Green = Task 2 faithful. Failures = module bugs; fix minimally toward spec §3 and document. Likely suspects: lostAfterDone bookkeeping when the reduce phase hasn't started (`fetched` empty, reduces `waiting` — the `stillNeeded` predicate must treat a waiting reduce as needing every map), fetch retries against a source that was reset, single-worker self-send delivery.
+- [x] **Step 2: Run.** Green = Task 2 faithful. Failures = module bugs; fix minimally toward spec §3 and document. Likely suspects: lostAfterDone bookkeeping when the reduce phase hasn't started (`fetched` empty, reduces `waiting` — the `stillNeeded` predicate must treat a waiting reduce as needing every map), fetch retries against a source that was reset, single-worker self-send delivery. — Fixed 3 real bugs (incarnation@declareDead, reduce-done→scheduleMr, df-start stale-attempt guard); self-send was a red herring. See `.superpowers/sdd/task-3-report.md`.
 
-- [ ] **Step 3: Commit** — `test(modules): pin the MR recovery matrix — rerun, disk loss, reducer death, revive, one-worker completion`
+- [x] **Step 3: Commit** — `test(modules): pin the MR recovery matrix — rerun, disk loss, reducer death, revive, one-worker completion` (commit `22dbc0a`)
 
 ---
 
@@ -1085,7 +1085,7 @@ Add `EXPECTED_COUNTS` to the existing import from `./batch-shared`.
 
 **Files:** `src/modules/batch.test.ts` (append)
 
-- [ ] **Step 1: Append**
+- [x] **Step 1: Append**
 
 ```ts
 // append to src/modules/batch.test.ts
@@ -1146,9 +1146,9 @@ test('same kill, unequal damage: a restart-triggering kill wastes more dataflow 
 }, 30_000);
 ```
 
-- [ ] **Step 2: Run; fix real bugs only** (suspects: stale-attempt records folding into the new attempt — the double-count guard; `awaitingRevive` handoff on the revival pong; restart placement when only one worker lives).
+- [x] **Step 2: Run; fix real bugs only** (suspects: stale-attempt records folding into the new attempt — the double-count guard; `awaitingRevive` handoff on the revival pong; restart placement when only one worker lives). — Green on first append; no new fixes needed. Task 3's df-start stale-attempt guard + total-blackout revive path already cover all four gates.
 
-- [ ] **Step 3: Commit** — `test(modules): pin the dataflow restart matrix — poison kill, idle kill, total blackout, damage inequality`
+- [x] **Step 3: Commit** — `test(modules): pin the dataflow restart matrix — poison kill, idle kill, total blackout, damage inequality`
 
 ---
 
