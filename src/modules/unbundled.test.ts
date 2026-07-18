@@ -127,6 +127,29 @@ describe('rebuild: wipe a view then replay from offset 0', () => {
     const s = db(sim);
     expect(s.search.index).toEqual(deriveSearch(s.log));
   });
+  test('wipe leaves a durable counter even after the view fully rebuilds', () => {
+    const sim = makeSim();
+    boot(sim);
+    expect(db(sim).cache.wipes).toBe(0);
+    sim.external(DB, { cmd: 'wipe', view: 'cache' });
+    // drain: one same-tick advance timer was already queued ahead of this external (lower
+    // seq at the same virtual time), then the wipe command itself (Simulation.external()
+    // only enqueues — see sim.ts).
+    sim.runSteps(2);
+    expect(db(sim).cache.wipes).toBe(1);
+    // Rebuild to head — the counter must NOT reset back to 0 once contents catch up again;
+    // it's a durable trace of the wipe, not a transient "just wiped" flag.
+    sim.runSteps(ADVANCE_EVERY * 40);
+    expect(db(sim).cache.offset).toBe(db(sim).log.length);
+    expect(db(sim).cache.wipes).toBe(1);
+    // A second wipe increments again.
+    sim.external(DB, { cmd: 'wipe', view: 'cache' });
+    sim.runSteps(2);
+    expect(db(sim).cache.wipes).toBe(2);
+    // A never-wiped view stays at 0.
+    expect(db(sim).search.wipes).toBe(0);
+    expect(db(sim).analytics.wipes).toBe(0);
+  });
 });
 
 describe('exactly-once: redelivery double-counts only without dedup', () => {

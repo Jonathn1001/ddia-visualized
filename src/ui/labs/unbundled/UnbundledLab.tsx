@@ -54,7 +54,6 @@ export function UnbundledLab() {
 
   // challenge flags (epoch-scoped)
   const [c1Miss, setC1Miss] = useState<string | null>(null);
-  const [c2Wiped, setC2Wiped] = useState(false);
   const [c3SawOver, setC3SawOver] = useState(false);
   const [c3Redup, setC3Redup] = useState(false);
 
@@ -69,7 +68,6 @@ export function UnbundledLab() {
     for (let i = 0; i < UNBUNDLED_NODES.length; i++) d.stepOnce();
     setDriver(d);
     setC1Miss(null);
-    setC2Wiped(false);
     setC3SawOver(false);
     setC3Redup(false);
     setQueryResult(null);
@@ -91,20 +89,24 @@ export function UnbundledLab() {
     if (sumTally(dbv.analytics.tally) > sumTally(deriveAnalytics(dbv.log))) setC3SawOver(true);
   }, [dbv]);
 
-  // C2's wipe is likewise detected reactively, not synchronously in onWipe:
-  // driver.external({cmd:'wipe',...}) only enqueues, so right after the click
-  // dbv still shows the pre-wipe (already caught-up) cache. A synchronous
-  // c2Wiped flag there would let check() read that untouched, already-exact
-  // cache and declare a false win the instant "wipe" is clicked — before the
-  // wipe (or any rebuild) ever actually processes. Setting it only once we
-  // observe the post-wipe state itself (offset back to 0, contents empty)
-  // proves a real wipe landed, closing that false-win window.
-  useEffect(() => {
-    if (!dbv) return;
-    if (dbv.head > 0 && dbv.cache.offset === 0 && Object.keys(dbv.cache.map).length === 0) setC2Wiped(true);
-  }, [dbv]);
-
   if (!driver || !dbv) return null;
+
+  // C2's wipe is read from a DURABLE marker (dbv.cache.wipes), not a transient
+  // render state. Watching for the transient post-wipe snapshot (offset back
+  // to 0, contents empty) is fragile under batching: SimDriver.tick() runs
+  // `speed` (25) events per animation frame before publishing once, and a
+  // cache wipe only needs ~4 advance firings (~12-13 events) to fully
+  // rebuild — so under "play" the zeroed intermediate state can be skipped
+  // entirely between two publishes and this challenge could never be won
+  // except via the single-step button. `wipes` increments on every wipe and
+  // never resets on rebuild, so it survives batching either way.
+  //
+  // No instant-win regression: driver.external({cmd:'wipe',...}) only
+  // enqueues — publishNow() right after the click still reflects the
+  // PRE-wipe state, where cache.wipes hasn't incremented yet, so c2Wiped is
+  // false and check() can't win off the click alone. Only once the wipe
+  // event is actually processed (next step/tick) does wipes become >0.
+  const c2Wiped = dbv.cache.wipes > 0;
 
   const onView = (v: ViewId) => ({
     onPause: () => driver.external(DB, { cmd: getPaused(dbv, v) ? 'resume' : 'pause', view: v }),
@@ -188,7 +190,7 @@ export function UnbundledLab() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3 font-mono text-xs">
         <button className={btn} onClick={() => setEpoch((e) => e + 1)}>reset (new seed)</button>
-        <button data-action="lab-step" className={btn} onClick={() => driver.stepOnce()}>step</button>
+        <button data-action="lab-step" className={btn} onClick={() => driver.stepOnce()} disabled={view.running}>step</button>
         <span className="text-dim">one log, three lagging views — write, then step or play to watch them catch up</span>
       </div>
 

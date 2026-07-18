@@ -20,6 +20,7 @@ export interface ViewCommon {
   offset: number;
   paused: boolean;
   dedup: boolean;
+  wipes: number;
 }
 export interface SearchView extends ViewCommon {
   index: SearchIndex;
@@ -53,6 +54,7 @@ export interface ViewInspect {
   offset: number;
   paused: boolean;
   dedup: boolean;
+  wipes: number;
 }
 export interface DbInspect {
   head: number;
@@ -64,13 +66,13 @@ export interface DbInspect {
 
 // ---- fresh (empty, offset 0) views ----
 function freshSearch(): SearchView {
-  return { offset: 0, paused: false, dedup: false, index: {}, keyTerms: {} };
+  return { offset: 0, paused: false, dedup: false, wipes: 0, index: {}, keyTerms: {} };
 }
 function freshCache(): CacheView {
-  return { offset: 0, paused: false, dedup: false, map: {} };
+  return { offset: 0, paused: false, dedup: false, wipes: 0, map: {} };
 }
 function freshAnalytics(): AnalyticsView {
-  return { offset: 0, paused: false, dedup: false, tally: emptyTally() };
+  return { offset: 0, paused: false, dedup: false, wipes: 0, tally: emptyTally() };
 }
 
 // ---- apply ONE record to a view's CONTENT (offset untouched) ----
@@ -126,9 +128,11 @@ function setFlag(s: DbState, view: ViewId, patch: Partial<ViewCommon>): DbState 
 
 function wipe(s: DbState, view: ViewId): DbState {
   // Clear contents + reset offset to 0; keep dedup, force unpaused so it rebuilds.
-  if (view === 'search') return { ...s, search: { ...freshSearch(), dedup: s.search.dedup } };
-  if (view === 'cache') return { ...s, cache: { ...freshCache(), dedup: s.cache.dedup } };
-  return { ...s, analytics: { ...freshAnalytics(), dedup: s.analytics.dedup } };
+  // wipes increments (never resets) so a wipe leaves a durable trace even if
+  // the rebuild finishes within a single batched publish (see UnbundledLab).
+  if (view === 'search') return { ...s, search: { ...freshSearch(), dedup: s.search.dedup, wipes: s.search.wipes + 1 } };
+  if (view === 'cache') return { ...s, cache: { ...freshCache(), dedup: s.cache.dedup, wipes: s.cache.wipes + 1 } };
+  return { ...s, analytics: { ...freshAnalytics(), dedup: s.analytics.dedup, wipes: s.analytics.wipes + 1 } };
 }
 
 const advanceTimer = (view: ViewId): Effect => ({ type: 'timer', delay: ADVANCE_EVERY, payload: { t: 'advance', view } });
@@ -199,12 +203,25 @@ export const unbundled: SimModule<DbState, UnbundledPayload> = {
     return {
       head: state.log.length,
       log: state.log,
-      search: { offset: state.search.offset, paused: state.search.paused, dedup: state.search.dedup, index: state.search.index },
-      cache: { offset: state.cache.offset, paused: state.cache.paused, dedup: state.cache.dedup, map: state.cache.map },
+      search: {
+        offset: state.search.offset,
+        paused: state.search.paused,
+        dedup: state.search.dedup,
+        wipes: state.search.wipes,
+        index: state.search.index,
+      },
+      cache: {
+        offset: state.cache.offset,
+        paused: state.cache.paused,
+        dedup: state.cache.dedup,
+        wipes: state.cache.wipes,
+        map: state.cache.map,
+      },
       analytics: {
         offset: state.analytics.offset,
         paused: state.analytics.paused,
         dedup: state.analytics.dedup,
+        wipes: state.analytics.wipes,
         tally: state.analytics.tally,
       },
     } as unknown as InspectorTree;
