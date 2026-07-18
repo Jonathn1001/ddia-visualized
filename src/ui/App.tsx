@@ -22,6 +22,8 @@ import { LeaseLab } from './labs/lease/LeaseLab';
 import { LeaseDebrief } from './labs/lease/Debrief';
 import { RaftLab } from './labs/raft/RaftLab';
 import { RaftDebrief } from './labs/raft/Debrief';
+import { BatchLab } from './labs/batch/BatchLab';
+import { BatchDebrief } from './labs/batch/Debrief';
 
 interface Page {
   eyebrow: string;
@@ -135,6 +137,20 @@ const PAGES: Record<string, Omit<Page, 'body'> & { Component: () => ReactNode }>
     thesis:
       'Consensus is the art of the majority; linearizability is the promise your reads keep. What the checker saw, and the tricks real systems use to read fast without lying.',
     Component: RaftDebrief,
+  },
+  '10.1': {
+    eyebrow: 'Chapter 10 — Batch Processing',
+    title: 'MapReduce vs Dataflow',
+    thesis:
+      'The same URL-count job runs twice: a MapReduce engine that materializes every map output behind a hard stage barrier, and a dataflow engine that streams records straight to reducers. Healthy, the pipeline wins. Kill a worker mid-job and watch one side re-run a single task while the other starts over from the input.',
+    Component: BatchLab,
+  },
+  '10.d': {
+    eyebrow: 'Chapter 10 — Debrief',
+    title: 'What you just broke',
+    thesis:
+      'Materialization buys cheap recovery; pipelining buys speed — and couples stages. What the barrier paid for, what the pipeline lost, and how Spark and Flink split the difference.',
+    Component: BatchDebrief,
   },
   '11.1': {
     eyebrow: 'Chapter 11 — Stream Processing',

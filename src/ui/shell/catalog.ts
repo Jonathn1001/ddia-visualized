@@ -105,7 +105,10 @@ export const CATALOG: Chapter[] = [
   {
     id: 'ch10',
     title: 'Ch.10 — Batch Processing',
-    labs: [{ id: '10.1', label: 'MapReduce Flow', status: 'soon' }],
+    labs: [
+      { id: '10.1', label: 'MapReduce vs Dataflow', status: 'active' },
+      { id: '10.d', label: 'Debrief & Journal', status: 'active' },
+    ],
   },
   {
     id: 'ch11',

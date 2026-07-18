@@ -30,3 +30,9 @@ test('ch11 ships three broker flows + debrief, all active', () => {
   expect(ch11.labs.map((l) => l.id)).toEqual(['11.1', '11.2', '11.3', '11.d']);
   expect(ch11.labs.every((l) => l.status === 'active')).toBe(true);
 });
+
+test('ch10 ships the twin batch lab + debrief, all active', () => {
+  const ch10 = CATALOG.find((c) => c.id === 'ch10')!;
+  expect(ch10.labs.map((l) => l.id)).toEqual(['10.1', '10.d']);
+  expect(ch10.labs.every((l) => l.status === 'active')).toBe(true);
+});

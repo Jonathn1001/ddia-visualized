@@ -10,7 +10,7 @@ Design: [`docs/DESIGN_PLAN.en.md`](docs/DESIGN_PLAN.en.md) (canonical; Vietnames
 
 ## Status
 
-**Eight chapters live — fifteen interactive labs.**
+**Nine chapters live — sixteen interactive labs.**
 
 **Ch.3 — Storage Engines:**
 - **3.1 LSM-Tree vs B-Tree** — the same keys drive both engines side-by-side; memtable → SSTable flush → compaction with bloom filters next to a page-splitting B-tree, and a write/read/space amplification scoreboard. Challenges: *crash mid-write — what does the WAL save?*, *disk-full — compaction stalls vs the split is refused*, *torn write — detect the corruption*.
@@ -36,6 +36,10 @@ Design: [`docs/DESIGN_PLAN.en.md`](docs/DESIGN_PLAN.en.md) (canonical; Vietnames
 
 **Ch.9 — Consistency & Consensus:**
 - **9.1 Raft + Linearizability Checker** — a five-node Raft cluster: randomized-timeout elections, log replication, the §5.4.2 commit restriction, and a client history table feeding a Wing–Gong linearizability checker. Challenges: *the minority cannot decide (partition the leader — its write hangs pending)*, *heal and repent (the dangling write is truncated away, logs converge)*, *catch the stale read (a deposed leader answers from the past — the checker proves the violation)*.
+
+**Ch.10 — Batch Processing:**
+- **10.1 MapReduce vs Dataflow** — the same URL-count job on two engines side by side: a MapReduce engine that materializes every map output to local disk behind a hard stage barrier, and a dataflow engine that streams records straight to reducers. Healthy, the pipeline finishes first; kill a worker and the trade flips. Challenges: *kill a mapper mid-task (its map re-runs elsewhere, output stays exact)*, *done isn't safe until fetched (a done-but-unfetched map dies with its disk and re-runs)*, *same kill, unequal damage (the dataflow side wastes more — no checkpoint to fall back on)*.
+- **10.d What you just broke** — materialization vs pipelining, the skew you saw, joins as the deferred half of batch, and how Spark's lineage and Flink's checkpoints beat restart-from-input.
 
 **Ch.11 — Stream Processing** (three standalone broker flows; same workload, three delivery fates):
 - **11.1 Kafka Log** — replayable log, offset commits, session-timeout replay. Challenge: *make the group process a message twice*.
