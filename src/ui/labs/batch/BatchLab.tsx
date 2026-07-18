@@ -58,8 +58,10 @@ export function BatchLab() {
         const p = m.payload as { side?: string; kind?: string };
         return p.side === side && (p.kind === 'fetch-resp' || p.kind === 'df-record');
       })
-      .map((m) => ({
-        id: `${m.from}-${m.target}-${m.deliverAt}`,
+      .map((m, i) => ({
+        // sentAt + index keep the key unique: two records can share
+        // from/target/deliverAt when the network assigns the same latency.
+        id: `${m.from}-${m.target}-${m.sentAt}-${m.deliverAt}-${i}`,
         from: m.from,
         to: m.target,
         frac: clamp01((view.time - m.sentAt) / Math.max(1, m.deliverAt - m.sentAt)),
