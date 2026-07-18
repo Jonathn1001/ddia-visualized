@@ -99,3 +99,79 @@ test('determinism: same seed → identical end states', () => {
     expect(JSON.stringify(a.getState(n))).toBe(JSON.stringify(b.getState(n)));
   }
 }, 30_000);
+
+// --- Task 3: MapReduce recovery matrix ---
+
+test('kill a mapper mid-task: the task re-runs elsewhere; partial ticks are wasted; output stays exact', () => {
+  const sim = fresh(10021);
+  runJob(sim);
+  until(sim, () => jt(sim).mr.tasks.m0.status === 'running');
+  const victim = jt(sim).mr.tasks.m0.worker!;
+  until(sim, () => jt(sim).mr.tasks.m0.execTicks > 0); // mid-task, some records done
+  sim.control({ type: 'kill', node: victim });
+  until(sim, () => jt(sim).live[victim] === false); // ping loop declares death
+  expect(jt(sim).mr.reexecuted).toBeGreaterThanOrEqual(1);
+  expect(jt(sim).mr.wasted).toBeGreaterThan(0);
+  until(sim, () => jt(sim).mr.completionTick !== null);
+  const counts: Record<string, number> = {};
+  for (const [u, n] of jt(sim).mr.output) counts[u] = (counts[u] ?? 0) + n;
+  expect(counts).toEqual(EXPECTED_COUNTS);
+}, 30_000);
+
+test('done is not safe until fetched: killing a done mapper before the shuffle re-runs its map', () => {
+  const sim = fresh(10022);
+  runJob(sim);
+  // wait for the FIRST map-done, then kill that worker before reduces can fetch
+  until(sim, () => Object.keys(jt(sim).mr.diskAt).length === 1);
+  const [m, w] = Object.entries(jt(sim).mr.diskAt)[0] as [string, string];
+  sim.control({ type: 'kill', node: w });
+  until(sim, () => jt(sim).live[w] === false);
+  expect(jt(sim).mr.lostAfterDone).toBeGreaterThanOrEqual(1);
+  expect(jt(sim).mr.tasks[m as 'm0'].status).not.toBe('done'); // re-queued
+  until(sim, () => jt(sim).mr.completionTick !== null);
+  const counts: Record<string, number> = {};
+  for (const [u, n] of jt(sim).mr.output) counts[u] = (counts[u] ?? 0) + n;
+  expect(counts).toEqual(EXPECTED_COUNTS);
+}, 30_000);
+
+test('kill a reducer mid-fetch: the reduce task re-runs and re-fetches from surviving disks', () => {
+  const sim = fresh(10023);
+  runJob(sim);
+  until(sim, () => jt(sim).mr.tasks.r0.status === 'running');
+  const victim = jt(sim).mr.tasks.r0.worker!;
+  sim.control({ type: 'kill', node: victim });
+  until(sim, () => jt(sim).live[victim] === false);
+  expect(jt(sim).mr.tasks.r0.attempt).toBeGreaterThanOrEqual(1);
+  until(sim, () => jt(sim).mr.completionTick !== null);
+  const counts: Record<string, number> = {};
+  for (const [u, n] of jt(sim).mr.output) counts[u] = (counts[u] ?? 0) + n;
+  expect(counts).toEqual(EXPECTED_COUNTS);
+}, 30_000);
+
+test('revive rejoins idle with an EMPTY local disk', () => {
+  const sim = fresh(10024);
+  runJob(sim);
+  until(sim, () => Object.keys(jt(sim).mr.diskAt).length >= 1);
+  const w = Object.values(jt(sim).mr.diskAt)[0] as string;
+  sim.control({ type: 'kill', node: w });
+  until(sim, () => jt(sim).live[w] === false);
+  sim.control({ type: 'revive', node: w });
+  until(sim, () => jt(sim).live[w] === true);
+  expect(Object.keys(wk(sim, w).mr.disk)).toHaveLength(0);
+  expect(wk(sim, w).mr.run).toBeNull();
+  until(sim, () => jt(sim).mr.completionTick !== null && jt(sim).df.completionTick !== null);
+}, 30_000);
+
+test('one worker is enough: kill two workers and both jobs still finish, output exact', () => {
+  const sim = fresh(10025);
+  runJob(sim);
+  until(sim, () => jt(sim).started);
+  sim.control({ type: 'kill', node: 'W2' });
+  sim.control({ type: 'kill', node: 'W3' });
+  until(sim, () => jt(sim).mr.completionTick !== null && jt(sim).df.completionTick !== null, 60000);
+  for (const side of ['mr', 'df'] as const) {
+    const counts: Record<string, number> = {};
+    for (const [u, n] of jt(sim)[side].output) counts[u] = (counts[u] ?? 0) + n;
+    expect(counts).toEqual(EXPECTED_COUNTS);
+  }
+}, 30_000);

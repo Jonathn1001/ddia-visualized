@@ -175,6 +175,7 @@ function startDfAttempt(s: SchedState, fx: Effect[]): void {
 /** All consequences of "w is dead", both branches. */
 function declareDead(s: SchedState, w: NodeId, now: number, fx: Effect[]): void {
   s.live[w] = false;
+  s.incarnation[w] += 1;
   // --- MR: the running task on w loses its partial execution ---
   const runningId = TASK_ORDER.find((t) => s.mr.tasks[t].status === 'running' && s.mr.tasks[t].worker === w);
   if (runningId) {
@@ -282,7 +283,6 @@ function schedReduce(s: SchedState, ev: Ev, fx: Effect[]): void {
         scheduleMr(s, fx);
         if (s.df.awaitingRevive) startDfAttempt(s, fx);
       } else {
-        s.incarnation[w] += 1;
         fx.push({ type: 'send', to: w, payload: { kind: 'reset', incarnation: s.incarnation[w] } });
       }
     }
@@ -332,6 +332,11 @@ function schedReduce(s: SchedState, ev: Ev, fx: Effect[]): void {
           s.mr.phase = 'done';
           s.mr.completionTick = ev.time;
           s.mr.output.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])); // stable display order
+        } else {
+          // a reducer freed its worker — a still-runnable reduce (e.g. r1 held
+          // back at the barrier because the one live worker was busy with r0)
+          // must now be assigned. Cheap no-op when nothing is runnable.
+          scheduleMr(s, fx);
         }
         break;
       }
@@ -566,6 +571,12 @@ function workerReduce(s: WorkerState, ev: Ev, fx: Effect[]): void {
   }
   const d = p as DfMsg;
   if (d.kind === 'df-start') {
+    // Attempt is monotonic (rule: mismatched attempts are ignored on receipt).
+    // Two workers can die in one JT ping-pass, so a restart's df-start (attempt
+    // N+1) and the prior attempt's df-start (attempt N) can both be in flight to
+    // the same worker; if the stale N lands last, an unguarded overwrite would
+    // strand the worker on a lineage JT already abandoned. Only ever move forward.
+    if (d.attempt <= s.df.attempt) return;
     s.df = {
       attempt: d.attempt,
       reducerAt: d.reducerAt,
