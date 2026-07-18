@@ -33,7 +33,7 @@
 
 **Interfaces (later tasks import exactly these):** `JT`, `WORKERS`, `BATCH_NODES`, `URLS`, `Url`, `ACCESS_LOG`, `SPLITS`, `PARTITION_OF`, `EXPECTED_COUNTS`, `MAP_TASKS`, `REDUCE_TASKS`, `SPLIT_OF`, `REDUCE_INPUT`, `REDUCE_EXEC_RECORDS`, cost/liveness constants above, `MAP_RECORDS`, `MAP_EXEC_TICKS`, `PartFile`, `mapPartitions`, types `Side`, `MapTaskId`, `ReduceTaskId`, `TaskId`, `BatchMsg`, `BatchTimer`, `BatchExternal`, `BatchPayload`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // src/modules/batch-shared.test.ts
@@ -84,9 +84,9 @@ test('fixtures are frozen — the twin branches can never share-and-mutate them'
 });
 ```
 
-- [ ] **Step 2: RED** — module unresolved. Run: `npx vitest run src/modules/batch-shared.test.ts`
+- [x] **Step 2: RED** — module unresolved. Run: `npx vitest run src/modules/batch-shared.test.ts`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```ts
 // src/modules/batch-shared.ts
@@ -201,11 +201,11 @@ export type BatchExternal = { cmd: 'run-job' };
 export type BatchPayload = BatchMsg | BatchTimer | BatchExternal;
 ```
 
-- [ ] **Step 4: GREEN + tsc + eslint.**
+- [x] **Step 4: GREEN + tsc + eslint.**
 
 Run: `npx vitest run src/modules/batch-shared.test.ts && npx tsc -b && npx eslint src/modules/batch-shared.ts src/modules/batch-shared.test.ts`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/modules/batch-shared.ts src/modules/batch-shared.test.ts
@@ -232,7 +232,7 @@ The FULL module lands here (both sub-engines, liveness, recovery, counters); Tas
 5. **Dataflow output waits for counted streams.** A `df-stream-close` can overtake the last `df-record`s (random per-message latency). Close carries `sent` (records streamed to that reducer worker); a reducer op is closed only when the close arrived AND its received-count matches. Re-check the trigger on every record AND close receipt.
 6. **The two branches never share mutable structures** (spec risk #1): `{mr, df}` are separate top-level keys; fixtures are frozen; the determinism property referees.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // src/modules/batch.test.ts
@@ -338,9 +338,9 @@ test('determinism: same seed → identical end states', () => {
 }, 30_000);
 ```
 
-- [ ] **Step 2: RED** — cannot resolve `./batch`.
+- [x] **Step 2: RED** — cannot resolve `./batch`.
 
-- [ ] **Step 3: Implement — state shapes and the scheduler half**
+- [x] **Step 3: Implement — state shapes and the scheduler half**
 
 ```ts
 // src/modules/batch.ts
@@ -977,11 +977,11 @@ export const batch: SimModule<BatchState, BatchPayload> = {
 
 Note the deliberate asymmetry (it IS the lesson): `declareDead` re-schedules one MR task from materialized state, but throws away the ENTIRE dataflow attempt. If a gate test fails around recovery, fix toward the spec's recovery rules (§3/§4), not toward the test.
 
-- [ ] **Step 4: GREEN + tsc + eslint.**
+- [x] **Step 4: GREEN + tsc + eslint.**
 
 Run: `npx vitest run src/modules/batch.test.ts && npx tsc -b && npx eslint src/modules/batch.ts src/modules/batch.test.ts`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/modules/batch.ts src/modules/batch.test.ts src/modules/batch-shared.ts
