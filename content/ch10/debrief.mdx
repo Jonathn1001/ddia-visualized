@@ -1,0 +1,122 @@
+# Chapter 10 — Batch Processing: Debrief
+
+## Materialization buys cheap recovery; pipelining buys speed
+
+You ran the same URL-count job on both engines and watched dataflow finish first —
+no barrier wait, no disk ticks, records streamed straight from mapper to reducer.
+Then you killed a worker mid-job and the story flipped. MapReduce re-ran exactly
+**one task**, picking up from what every other worker had already written to disk.
+Dataflow had nothing to pick up from: the kill poisoned its in-flight, in-memory
+lineage, and the whole attempt restarted from the input. Same kill, same tick,
+unequal damage — that gap is the entire trade-off DDIA draws between the two
+models. Materializing every stage to disk costs you time on the happy path and
+buys you a cheap, task-granular recovery when something dies. Pipelining skips
+that cost and that safety net together — the stages are fast because they're
+coupled, and a coupled pipeline fails as one unit.
+
+## Done isn't safe until fetched
+
+Watch a map task's chip turn `done` and it's tempting to read that as "this
+output is safe." It isn't. `done` means the worker finished executing and wrote
+its partitioned output to its **own local disk** — nothing more. That disk is
+not replicated anywhere; it lives and dies with the worker that holds it. Kill
+that worker before a reducer's shuffle fetch has pulled the partition off, and
+the output is gone, even though the task already reported success once. The
+scheduler has no choice but to re-run a task that already finished. This is
+Hadoop-faithful: local disk was always the cheap, uncommitted state, and "the
+job is durable" only becomes true once a reducer has actually pulled the data
+into its own hands — or, at the very end, once the reducer's output lands on
+HDFS, which *is* replicated.
+
+## The skew you saw
+
+The access log isn't uniform — `/home` accounts for 10 of the 24 hits — and the
+partitioning (`hash(url) % 2`) sends every one of those hits to the same reducer.
+r0 ended up with 16 records to fold; r1 got 8. r0 is a straggler purely because
+of what key it happened to own, not because its worker is slower or its network
+is worse. This is the classic batch skew problem: partitioning by key assumes
+keys are evenly distributed, and real workloads rarely oblige. The fix this lab
+didn't build is a **combiner** — a map-side pre-aggregation that folds
+duplicate keys together *before* the shuffle. If every mapper counted its own
+`/home` hits locally first, each reducer would receive one pre-summed value per
+mapper instead of one message per record, shrinking the hot partition and the
+network traffic that feeds it. Combiners only help when the reduce function is
+associative and commutative — counting qualifies; a median would not.
+
+## Joins — the deferred half of batch
+
+Everything you drove was a single-input job (count by key). DDIA spends real
+space on **joins**, and this lab left all three out on purpose:
+
+- **Sort-merge join** sorts both inputs by the join key during the map/shuffle
+  phase, so records with matching keys arrive at the same reducer already in
+  order — the reducer just walks both streams in lockstep. No index needed,
+  but it pays a full sort of both sides.
+- **Broadcast hash join** skips the sort entirely: if one side is small enough
+  to fit in memory, copy it to every mapper and hash-join against it locally
+  as the large side streams past. No shuffle for the join itself — but it only
+  works when one input is genuinely small.
+- **Partitioned hash join** applies when both inputs are already partitioned
+  and sorted the same way by the join key (a common case for tables that share
+  a partitioning scheme) — each reducer loads only its matching partition pair
+  into a hash table, no broadcast and no full shuffle required.
+
+## What the restart really costs, and the real fixes
+
+The dataflow engine you drove restarts the *entire job* from the input on any
+poisoning kill — that's the naive, un-checkpointed baseline, and it's honest
+about the cost of pipelining without a safety net. Real dataflow systems do
+better than "start over." **Spark** represents a computation as an RDD lineage
+graph — a record of the transformations that produced each partition. Lose a
+partition and Spark recomputes only *that* partition by replaying its lineage,
+not the whole job; the granularity of recovery is the partition, not the
+attempt. **Flink** takes a different route: periodic **checkpoint barriers**
+flow through the pipeline alongside the data, and every operator snapshots its
+state when a barrier passes. Recovery rolls the whole pipeline back to the
+last completed checkpoint, not back to tick zero. Both are strictly better than
+what you watched happen here — this lab's restart-from-input is the thing they
+were both built to avoid.
+
+## The named cuts
+
+This lab is deliberately smaller than a real cluster in a few places, all
+worth naming so the simplification doesn't read as an accident:
+
+- **Speculative execution** — Hadoop schedules backup copies of tasks that are
+  running suspiciously slowly (stragglers), and takes whichever copy finishes
+  first. Nothing here races a straggler; the r0/r1 skew you saw just runs long.
+- **A killable JobTracker** — the scheduler node is immortal in this lab; only
+  workers can be killed. Real Hadoop clusters run JobTracker/ResourceManager HA
+  so a scheduler crash doesn't take the whole job down with it.
+- **Multi-job workflows** — this lab is one job, start to finish. Real batch
+  pipelines chain many jobs into DAGs (Hive, Pig, Airflow-style schedulers),
+  where one job's output is the next job's input.
+- **HDFS replication mechanics** — the lab treats the input log as durable and
+  "always available" without modeling the 3x block replication that actually
+  makes that true.
+- **Hadoop's early shuffle fetch** — real Hadoop reducers start fetching each
+  mapper's output as soon as that individual map task completes, overlapping
+  shuffle with the tail of the map phase. This lab uses a hard barrier — no
+  reducer starts until every map is done — which is a clean simplification,
+  not the real timing.
+
+## Real systems
+
+**Hadoop MapReduce** is the lab's MR side, close to unmodified: barrier
+phases, disk-materialized intermediate output, shuffle-by-fetch. **Spark**
+generalizes the model with in-memory RDDs and lineage-based recovery, closing
+most of the gap between MapReduce's safety and dataflow's speed. **Flink** goes
+further into true streaming — no batch/stream distinction at the engine level,
+recovery via checkpoint barriers rather than replay from disk or from scratch.
+
+## Terms
+
+- **job** — one full run of a computation over an input; what `run job` starts.
+- **task** — one unit of a job assigned to one worker (one map task, one reduce task).
+- **split** — a contiguous chunk of the input assigned to a single map task.
+- **shuffle** — moving each mapper's partitioned output to the reducer that owns it.
+- **partition** — the reducer a given key is routed to (`hash(key) % reducers`).
+- **materialization** — writing intermediate output to disk between stages.
+- **lineage** — the record of how a partition of data was derived, used to recompute it.
+- **straggler** — a task that runs far longer than its peers, often from skew.
+- **combiner** — a map-side pre-aggregation that reduces shuffle volume for associative operations.
