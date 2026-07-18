@@ -1196,7 +1196,7 @@ export interface BatchWorkerInspect {
 
 `shuffleInFlight` derivations (from sched state alone): **mr** = for each running reduce task, `3 - fetched[r].length`, summed; **df** = while the attempt runs (started, not done, not awaitingRevive), `MAP_TASKS.length - mapsDone.length` (streams still open).
 
-- [ ] **Step 1: Append tests**
+- [x] **Step 1: Append tests**
 
 ```ts
 // append to src/modules/batch.test.ts — import { batch } is already there via './batch'
@@ -1227,7 +1227,7 @@ test('metrics: both columns, six counters each, completion ticks appear once don
 }, 30_000);
 ```
 
-- [ ] **Step 2: RED → implement**
+- [x] **Step 2: RED → implement**
 
 ```ts
   metrics(states, _time): MetricSample[] {
@@ -1295,7 +1295,7 @@ test('metrics: both columns, six counters each, completion ticks appear once don
 
 Also add `lostAfterDone` to `BatchSideCounters` (mr-only, 0 on df) — challenge 2's verifier and the StagePanel disk row both read it. Wire it in `counters()` accordingly.
 
-- [ ] **Step 3: GREEN + tsc + eslint. Commit** — `feat(modules): batch inspect/metrics — twin-panel contract`
+- [x] **Step 3: GREEN + tsc + eslint. Commit** — `feat(modules): batch inspect/metrics — twin-panel contract` (commit `b8f4e60`; `metrics(states)` drops unused time param per module convention)
 
 ---
 
