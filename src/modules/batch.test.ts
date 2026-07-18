@@ -175,3 +175,61 @@ test('one worker is enough: kill two workers and both jobs still finish, output 
     expect(counts).toEqual(EXPECTED_COUNTS);
   }
 }, 30_000);
+
+// --- Task 4: dataflow restart matrix ---
+
+test('killing a streaming worker restarts the dataflow job from the input and books the wasted ticks', () => {
+  const sim = fresh(10031);
+  runJob(sim);
+  until(sim, () => jt(sim).df.execTicks > 0); // records are flowing
+  const w = jt(sim).df.placement.r0!; // reducer worker — always poisons
+  sim.control({ type: 'kill', node: w });
+  until(sim, () => jt(sim).df.restarts >= 1);
+  expect(jt(sim).df.wasted).toBeGreaterThan(0);
+  until(sim, () => jt(sim).df.completionTick !== null);
+  const counts: Record<string, number> = {};
+  for (const [u, n] of jt(sim).df.output) counts[u] = (counts[u] ?? 0) + n;
+  expect(counts).toEqual(EXPECTED_COUNTS); // no double counting from the aborted lineage
+}, 30_000);
+
+test('killing an idle dataflow worker costs nothing', () => {
+  const sim = fresh(10032);
+  runJob(sim);
+  // W3 holds only m0 — wait until m0 is done streaming, then kill W3
+  until(sim, () => jt(sim).df.mapsDone.includes('m0'));
+  const w3 = jt(sim).df.placement.m0!;
+  const restartsBefore = jt(sim).df.restarts;
+  sim.control({ type: 'kill', node: w3 });
+  until(sim, () => jt(sim).live[w3] === false);
+  expect(jt(sim).df.restarts).toBe(restartsBefore); // no poison — W3 held no live df state
+  until(sim, () => jt(sim).df.completionTick !== null);
+}, 30_000);
+
+test('kill all three workers: both jobs pause; the first revive restarts/resumes them to completion', () => {
+  const sim = fresh(10033);
+  runJob(sim);
+  until(sim, () => jt(sim).df.execTicks > 0);
+  for (const w of WORKERS) sim.control({ type: 'kill', node: w });
+  until(sim, () => WORKERS.every((w) => jt(sim).live[w] === false));
+  expect(jt(sim).df.awaitingRevive).toBe(true);
+  expect(jt(sim).df.completionTick).toBeNull();
+  sim.control({ type: 'revive', node: 'W1' });
+  until(sim, () => jt(sim).mr.completionTick !== null && jt(sim).df.completionTick !== null, 60000);
+  for (const side of ['mr', 'df'] as const) {
+    const counts: Record<string, number> = {};
+    for (const [u, n] of jt(sim)[side].output) counts[u] = (counts[u] ?? 0) + n;
+    expect(counts).toEqual(EXPECTED_COUNTS);
+  }
+}, 30_000);
+
+test('same kill, unequal damage: a restart-triggering kill wastes more dataflow ticks than MR ticks', () => {
+  const sim = fresh(10034);
+  runJob(sim);
+  // let both sides do real work first
+  until(sim, () => jt(sim).df.execTicks > 4 * 8 && jt(sim).mr.tasks.m0.execTicks > 0);
+  const w = jt(sim).df.placement.r0!;
+  sim.control({ type: 'kill', node: w });
+  until(sim, () => jt(sim).df.restarts >= 1);
+  until(sim, () => jt(sim).mr.completionTick !== null && jt(sim).df.completionTick !== null, 60000);
+  expect(jt(sim).df.wasted).toBeGreaterThan(jt(sim).mr.wasted);
+}, 30_000);
