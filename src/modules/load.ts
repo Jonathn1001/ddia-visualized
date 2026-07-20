@@ -41,7 +41,10 @@ function tick(s: LoadState, now: number): LoadState {
   return { ...s, busyTicks: s.busyTicks + s.inService * (now - s.lastEventT), lastEventT: now };
 }
 
-const arrivalTimer = (mean: number): Effect => ({ type: 'timer', delay: mean, payload: { t: 'arrival' } });
+const arrivalTimer = (delay: number): Effect => ({ type: 'timer', delay, payload: { t: 'arrival' } });
+/** Next inter-arrival: Exponential(interArrivalMean) — Poisson arrivals, rounded to >= 1 tick. */
+const nextArrival = (state: LoadState, rng: SeededRng): Effect =>
+  arrivalTimer(expTick(interArrivalMean(state.loadLevel), 1 - rng.next()));
 const completeTimer = (delay: number, parentId: number, cached: boolean): Effect => ({
   type: 'timer',
   delay,
@@ -61,7 +64,7 @@ function onArrival(state: LoadState, now: number, rng: SeededRng): [LoadState, E
   const parentId = s.nextId;
   const parent: Parent = { remaining: s.fanout, arrivalT: now, maxLatency: 0 };
   s = { ...s, nextId: s.nextId + 1, pending: { ...s.pending, [parentId]: parent } };
-  const effects: Effect[] = [arrivalTimer(interArrivalMean(s.loadLevel))];
+  const effects: Effect[] = [nextArrival(s, rng)];
   for (let i = 0; i < s.fanout; i++) {
     const cached = rng.next() < s.cacheHitRate;
     const service = cached ? CACHE_TICKS : serviceTick(s, rng);
@@ -159,7 +162,7 @@ export const load: SimModule<LoadState, LoadPayload> = {
   },
 
   reduce(state, event, rng): [LoadState, Effect[]] {
-    if (event.kind === 'init') return [state, [arrivalTimer(interArrivalMean(state.loadLevel))]];
+    if (event.kind === 'init') return [state, [nextArrival(state, rng)]];
 
     if (event.kind === 'timer') {
       const p = event.payload as LoadTimer;
