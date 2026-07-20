@@ -110,17 +110,32 @@ shapes so equality across models is meaningful.
 type ModelId = 'relational' | 'document' | 'graph';
 type QueryId = 'fof' | 'm2m';               // friends-of-friends | likes-in-category
 interface Step { kind: 'hop' | 'fetch' | 'probe'; touched: Id[]; note: string }
-interface Trace { steps: Step[]; result: Id[]; cost: number } // cost === steps.length
+interface Trace { steps: Step[]; result: Id[]; roundTrips: number }
 ```
 
-- `runGraph(db, q)` — BFS/traversal over adjacency; each edge followed is a **hop**.
-- `runDocument(db, q)` — fetch the root doc, then one **fetch** per related id (the N+1);
-  `m2m` has no join, so it scans every user doc and fetches each liked post's doc.
-- `runRelational(db, q)` — join-table lookups; each row examined is a **probe**.
+- `runGraph(db, q)` — a single traversal over adjacency; each edge followed is a **hop**
+  step. **`roundTrips = 1`** (one query, the engine follows pointers in-process).
+- `runDocument(db, q)` — fetch the root doc, then one **fetch** per related id — the N+1;
+  `m2m` has no join, so it scans every user doc and fetches each liked post's doc. **Each
+  fetch is a `roundTrips`** — `roundTrips = steps.length` (there is no join; every hop is
+  a separate application-issued query).
+- `runRelational(db, q)` — one join over the join table; each row examined is a **probe**
+  step. **`roundTrips = 1`** (one declarative query).
+
+**Why `roundTrips`, not raw op-count, is the challenge metric (load-bearing):** counting
+internal ops (hops/fetches/probes) does *not* make the document model the loser — for
+FoF the document does ~6 fetches while the relational join probes ~7 rows and the graph
+walks ~5 edges, so document is not even the max. The N+1 problem is a **round-trip**
+problem: the document model issues one application query *per entity* because it cannot
+join, while relational and graph answer in **one** query. `roundTrips` is the honest
+countable number (each is a network RTT — what actually costs latency), and it is the
+number that makes the DDIA lesson true. The animated `steps` still show the internal work
+(so the graph's cheap in-engine hops are visible against the document's expensive
+per-fetch round trips); the **challenge gates on `roundTrips`**.
 
 Every runner returns the **same `result`** for the same query (asserted by the property
-suite); only `cost` and the `steps` differ. `result` is a **sorted** `Id[]` so equality
-is order-independent.
+suite); only `roundTrips` and the `steps` differ. `result` is a **sorted** `Id[]` so
+equality is order-independent.
 
 ### State, stepping, schema-flex
 
@@ -138,8 +153,8 @@ interface ModelsState {
 A `{t:'step'}` timer (armed on the `init` event, re-armed every `STEP_EVERY` ticks while
 **any** cursor `< its trace.steps.length`) advances each not-done cursor by one — models
 race, the fast one idles while the slow one grinds. `done(model) = cursor[model] ===
-traces[model].steps.length`. Cost shown = `cursor[model]` (consumed) vs
-`traces[model].cost` (total).
+traces[model].steps.length`. The panel shows the **animation op-count** `cursor[model]` /
+`steps.length` (internal work) and the **headline `roundTrips`** (the challenge metric).
 
 ### Topology
 
@@ -173,8 +188,8 @@ sensitivity here, since the dataset is fixed and the traces are pure).
 
 | # | Name | Setup → win condition |
 |---|------|-----------------------|
-| **C1** | **Friends-of-friends: the join tax** (§4 signature) | `set-query fof` → play to completion. All three return `{dan,eve,frank}` — **same answer** — but **`cost.document ≥ FOF_MULT · cost.graph`** (the document model's N+1 fetches dwarf the graph's hops). **Win = all done ∧ the cost gap.** |
-| **C2** | **Many-to-many: documents can't join** | `set-query m2m` → play to completion. Same answer set, but **`cost.document ≥ M2M_MULT · cost.relational`** — the document model has no join, so it fans out over every user's likes; the join table and the graph go straight there. **Win = all done ∧ the cost gap.** |
+| **C1** | **Friends-of-friends: the join tax** (§4 signature) | `set-query fof` → play to completion. All three return `{dan,eve,frank}` — **same answer** — but **`document.roundTrips ≥ FOF_MULT · graph.roundTrips`** (document ~6 round trips vs graph's 1 traversal). **Win = all done ∧ the round-trip gap.** |
+| **C2** | **Many-to-many: documents can't join** | `set-query m2m` → play to completion. Same answer set, but **`document.roundTrips ≥ M2M_MULT · relational.roundTrips`** — the document model has no join, so it scans every user doc and fetches each liked post (~12 round trips); the join table and the graph answer in one query. **Win = all done ∧ the round-trip gap.** |
 | **C3** | **Schema flexibility: read vs write** | `add-field` (adds `nickname` to one user). **`migration.document === 0 ∧ migration.graph === 0 ∧ migration.relational > 0`** — schema-on-read absorbs the new field per-document; schema-on-write needs an ALTER + NULLs for every existing row. **Win = the field added with 0 document migration.** |
 
 ---
@@ -271,9 +286,10 @@ DoD walk (vite + playwright) driving ≥ C1 to its live win banner, 0 console er
   stochastic Ch1 lab; the property suite still covers the seed-independent invariant
   (result-set equality) and the lesson test pins the exact ratios.
 - **Fixture must guarantee the ratios** — friendships/likes are chosen so FoF gives
-  `document ≥ 2× graph` and m2m gives `document ≥ 2× relational` with margin. If a runner
-  refactor changes a cost, the pinned lesson test catches it; re-tune the fixture, not the
-  threshold.
+  `document.roundTrips (~6) ≥ 2× graph.roundTrips (1)` and m2m gives
+  `document.roundTrips (~12) ≥ 2× relational.roundTrips (1)` with margin. Since graph and
+  relational are always 1 round trip, the ratios are robust; if a runner refactor changes
+  `roundTrips`, the pinned lesson test catches it — re-tune the fixture, not the threshold.
 - **C3 is a write-shape scenario, not a traversal** — it has no animated trace; it toggles
   `schema.nicknameAdded` and the panels re-render the storage shapes. Keep its "migration
   cost" honest: relational cost = 1 ALTER + the count of existing rows that get a NULL,
