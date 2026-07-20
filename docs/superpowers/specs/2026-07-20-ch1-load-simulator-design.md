@@ -131,10 +131,21 @@ workload.
   `pending[parentId]`, update challenge flags (§4).
 
 `serviceTick()` = `varianceOn ? expTick(SERVICE_MEAN) : SERVICE_MEAN`. `expTick(mean)` =
-`max(1, round(-mean·ln(rng.next())))` — rounded exponential, ≥ 1 tick, so the scrubber
-timeline stays integer and clean. Every roll draws from the sim RNG → deterministic per
+`max(1, round(-mean·ln(1 - rng.next())))` — rounded exponential, ≥ 1 tick, so the
+scrubber timeline stays integer and clean. **Draw `u = 1 - rng.next()` (∈ `(0,1]`), not
+`rng.next()` directly** — `rng.next()` returns `[0,1)` (`src/engine/rng.ts`), so a raw 0
+would give `ln 0 = -∞` and an Infinity service time; `1 - next()` makes `u=1 → ln 1 = 0`
+clamp cleanly to 1 tick. Every roll draws from the sim RNG → deterministic per
 seed. Accounting: on **every** event, add `inService·(now − lastEventT)` to `busyTicks`
-then set `lastEventT = now` (utilisation is computed from this).
+then set `lastEventT = now`.
+
+**Derived metrics (from `inspect`/`metrics`):** p50/p95/p99 over the `userLatencies` and
+`backendLatencies` windows; **throughput** = completions over the last `WINDOW`-worth of
+ticks (cumulative completions / elapsed — never a raw per-tick 0/1, same rolling basis
+as the percentiles); **queue depth** = `queue.length`; **utilisation** = the *measured*
+`busyTicks / (servers · elapsed)` (property d). This measured utilisation is **distinct
+from** the *analytic* ρ = λ/capacity below, which is used only as challenge-setup
+intuition — named apart so the panel number and the challenge prose never contradict.
 
 ### Capacity intuition (drives challenge params)
 
@@ -213,8 +224,10 @@ Amazon's p99.9 SLA rationale, tail-tolerant systems (Dean & Barroso, "The Tail a
 Scale"). Terms: latency vs response time, percentile / p99 / tail latency, throughput,
 load parameter, utilisation, head-of-line blocking, tail-latency amplification, SLA/SLO.
 
-**Wiring:** catalog `1.1` + `1.d` → `status:'active'`; `catalog.test.ts` ch1 test
-(mirror the ch10/ch12 shape); App PAGES entries; README ch1 block + counter bump;
+**Wiring:** catalog already ships `{ id:'1.1', label:'Load Simulator', status:'soon' }`
+with **no `1.d`** — so: flip `1.1` → `active`, **add** `1.d`, and update the existing
+`catalog.test.ts` ch1 assertion (currently expects `soon`); App PAGES entries with the
+aliased import `LoadDebrief` (the per-lab convention); README ch1 block + counter bump;
 DESIGN_PLAN Phase 5 progress note (ch1 shipped; only ch2 remains).
 
 ---
