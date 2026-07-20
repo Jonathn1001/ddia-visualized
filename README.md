@@ -10,7 +10,10 @@ Design: [`docs/DESIGN_PLAN.en.md`](docs/DESIGN_PLAN.en.md) (canonical; Vietnames
 
 ## Status
 
-**Ten chapters live — seventeen interactive labs.**
+**Eleven chapters live — eighteen interactive labs.**
+
+**Ch.1 — Reliable, Scalable, Maintainable:**
+- **1.1 Load Simulator** — requests hit a service tier modelled as an M/M/c queue; a load slider drives live p50/p95/p99, with servers / cache / service-variance / fan-out knobs and an SLA line. Challenges: *the knee (raise load until p99 detonates past the SLA, then add a replica to drain the queue and rescue the tail)*, *variance drives the tail (p99 ≫ p50 with almost no queue; toggle variance off and it collapses to the mean)*, *tail-latency amplification (fan one request out to twenty backend calls — the median user inherits the backend p95)*.
 
 **Ch.3 — Storage Engines:**
 - **3.1 LSM-Tree vs B-Tree** — the same keys drive both engines side-by-side; memtable → SSTable flush → compaction with bloom filters next to a page-splitting B-tree, and a write/read/space amplification scoreboard. Challenges: *crash mid-write — what does the WAL save?*, *disk-full — compaction stalls vs the split is refused*, *torn write — detect the corruption*.

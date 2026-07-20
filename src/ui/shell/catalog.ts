@@ -35,7 +35,10 @@ export const CATALOG: Chapter[] = [
   {
     id: 'ch1',
     title: 'Ch.1 — Reliable, Scalable, Maintainable',
-    labs: [{ id: '1.1', label: 'Load Simulator', status: 'soon' }],
+    labs: [
+      { id: '1.1', label: 'Load Simulator', status: 'active' },
+      { id: '1.d', label: 'Debrief & Journal', status: 'active' },
+    ],
   },
   {
     id: 'ch2',

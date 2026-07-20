@@ -19,6 +19,12 @@ test('catalog follows book-chapter order, engine demo pinned first', () => {
   ]);
 });
 
+test('ch1 ships the load simulator + debrief, all active', () => {
+  const ch1 = CATALOG.find((c) => c.id === 'ch1')!;
+  expect(ch1.labs.map((l) => l.id)).toEqual(['1.1', '1.d']);
+  expect(ch1.labs.every((l) => l.status === 'active')).toBe(true);
+});
+
 test('ch4 ships three API-style flows + debrief, all active', () => {
   const ch4 = CATALOG.find((c) => c.id === 'ch4')!;
   expect(ch4.labs.map((l) => l.id)).toEqual(['4.1', '4.2', '4.3', '4.d']);

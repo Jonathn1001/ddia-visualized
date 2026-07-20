@@ -26,6 +26,8 @@ import { BatchLab } from './labs/batch/BatchLab';
 import { BatchDebrief } from './labs/batch/Debrief';
 import { UnbundledLab } from './labs/unbundled/UnbundledLab';
 import { UnbundledDebrief } from './labs/unbundled/Debrief';
+import { LoadLab } from './labs/load/LoadLab';
+import { LoadDebrief } from './labs/load/Debrief';
 
 interface Page {
   eyebrow: string;
@@ -195,6 +197,20 @@ const PAGES: Record<string, Omit<Page, 'body'> & { Component: () => ReactNode }>
     thesis:
       'Why every derived view lags, why you can throw any of them away, and where exactly-once actually lives — at the endpoint, keyed on the offset.',
     Component: UnbundledDebrief,
+  },
+  '1.1': {
+    eyebrow: 'Chapter 1 — Scalability',
+    title: 'Load Simulator',
+    thesis:
+      'Requests pour into a service tier modelled as an M/M/c queue. Drag the load up and the median barely moves while p99 detonates near capacity — the knee. Add a replica or a cache to drain the queue and rescue the tail; turn service-time variance on to watch p99 pull away from p50 with no queue at all; fan one request out to twenty backend calls and watch the median user inherit the backend tail. Averages lie; percentiles tell the truth.',
+    Component: LoadLab,
+  },
+  '1.d': {
+    eyebrow: 'Chapter 1 — Debrief',
+    title: 'Averages lie; the tail is the number',
+    thesis:
+      'Why p99 breaks suddenly near capacity, why variance and fan-out make the tail worse, and where Reliability and Maintainability fit — the two pillars this lab left as prose.',
+    Component: LoadDebrief,
   },
   '4.1': {
     eyebrow: 'Chapter 4 — Encoding & Evolution',
