@@ -10,10 +10,13 @@ Design: [`docs/DESIGN_PLAN.en.md`](docs/DESIGN_PLAN.en.md) (canonical; Vietnames
 
 ## Status
 
-**Eleven chapters live — eighteen interactive labs.**
+**Twelve chapters live — nineteen interactive labs. The whole book is covered.**
 
 **Ch.1 — Reliable, Scalable, Maintainable:**
 - **1.1 Load Simulator** — requests hit a service tier modelled as an M/M/c queue; a load slider drives live p50/p95/p99, with servers / cache / service-variance / fan-out knobs and an SLA line. Challenges: *the knee (raise load until p99 detonates past the SLA, then add a replica to drain the queue and rescue the tail)*, *variance drives the tail (p99 ≫ p50 with almost no queue; toggle variance off and it collapses to the mean)*, *tail-latency amplification (fan one request out to twenty backend calls — the median user inherits the backend p95)*.
+
+**Ch.2 — Data Models:**
+- **2.1 Model Shape-Shifter** — one social graph stored three ways (relational tables / denormalized documents / graph), running the same query in all three, animated step-by-step with a live round-trip count. Challenges: *friends-of-friends — the join tax (same answer everywhere, but the document model pays N+1 round trips vs the graph's one traversal)*, *many-to-many — documents can't join (the document model scans everyone; the join table and graph go straight there)*, *schema flexibility (add a field — schema-on-read takes it free while the relational table migrates every row)*.
 
 **Ch.3 — Storage Engines:**
 - **3.1 LSM-Tree vs B-Tree** — the same keys drive both engines side-by-side; memtable → SSTable flush → compaction with bloom filters next to a page-splitting B-tree, and a write/read/space amplification scoreboard. Challenges: *crash mid-write — what does the WAL save?*, *disk-full — compaction stalls vs the split is refused*, *torn write — detect the corruption*.

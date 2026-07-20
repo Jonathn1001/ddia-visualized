@@ -25,6 +25,12 @@ test('ch1 ships the load simulator + debrief, all active', () => {
   expect(ch1.labs.every((l) => l.status === 'active')).toBe(true);
 });
 
+test('ch2 ships the model shape-shifter + debrief, all active', () => {
+  const ch2 = CATALOG.find((c) => c.id === 'ch2')!;
+  expect(ch2.labs.map((l) => l.id)).toEqual(['2.1', '2.d']);
+  expect(ch2.labs.every((l) => l.status === 'active')).toBe(true);
+});
+
 test('ch4 ships three API-style flows + debrief, all active', () => {
   const ch4 = CATALOG.find((c) => c.id === 'ch4')!;
   expect(ch4.labs.map((l) => l.id)).toEqual(['4.1', '4.2', '4.3', '4.d']);

@@ -43,7 +43,10 @@ export const CATALOG: Chapter[] = [
   {
     id: 'ch2',
     title: 'Ch.2 — Data Models',
-    labs: [{ id: '2.1', label: 'Model Shape-Shifter', status: 'soon' }],
+    labs: [
+      { id: '2.1', label: 'Model Shape-Shifter', status: 'active' },
+      { id: '2.d', label: 'Debrief & Journal', status: 'active' },
+    ],
   },
   {
     id: 'ch3',

@@ -12,12 +12,15 @@ test('shell renders navbar brand and the default lab page', () => {
   expect(screen.getByText('Replication Theater', { selector: 'h1' })).toBeTruthy();
 });
 
-test('sidebar navigates between labs; unbuilt labs disabled', () => {
+test('sidebar navigates between labs; every lab is now live (whole book shipped)', () => {
   render(<App />);
   fireEvent.click(screen.getByText('Ping-Pong Token Ring'));
   expect(screen.getByText('Ping-Pong Token Ring', { selector: 'h1' })).toBeTruthy();
-  const soonBtn = screen.getByText('Model Shape-Shifter').closest('button')!;
-  expect(soonBtn.disabled).toBe(true);
+  // Ch2 was the last "soon" lab; it is now active and navigable.
+  const modelsBtn = screen.getByText('Model Shape-Shifter').closest('button')!;
+  expect(modelsBtn.disabled).toBe(false);
+  fireEvent.click(modelsBtn);
+  expect(screen.getByText('Model Shape-Shifter', { selector: 'h1' })).toBeTruthy();
 });
 
 test('storage lab renders from the sidebar', () => {

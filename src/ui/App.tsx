@@ -28,6 +28,8 @@ import { UnbundledLab } from './labs/unbundled/UnbundledLab';
 import { UnbundledDebrief } from './labs/unbundled/Debrief';
 import { LoadLab } from './labs/load/LoadLab';
 import { LoadDebrief } from './labs/load/Debrief';
+import { ModelShifterLab } from './labs/models/ModelShifterLab';
+import { ModelsDebrief } from './labs/models/Debrief';
 
 interface Page {
   eyebrow: string;
@@ -211,6 +213,20 @@ const PAGES: Record<string, Omit<Page, 'body'> & { Component: () => ReactNode }>
     thesis:
       'Why p99 breaks suddenly near capacity, why variance and fan-out make the tail worse, and where Reliability and Maintainability fit — the two pillars this lab left as prose.',
     Component: LoadDebrief,
+  },
+  '2.1': {
+    eyebrow: 'Chapter 2 — Data Models',
+    title: 'Model Shape-Shifter',
+    thesis:
+      'One social graph stored three ways — relational tables, denormalized documents, a graph — runs the same query in all three, animated step-by-step with a live round-trip count. Friends-of-friends returns the same people everywhere, but the document model pays the N+1 join tax (a fetch per friend) while the graph traverses in one query. Switch to a many-to-many query and the document model hurts more; add a field and watch schema-on-read take it free while the relational table migrates every row.',
+    Component: ModelShifterLab,
+  },
+  '2.d': {
+    eyebrow: 'Chapter 2 — Debrief',
+    title: 'The model decides which questions are cheap',
+    thesis:
+      'Relational vs document vs graph: locality vs joins, many-to-many as a first-class edge, schema-on-read vs schema-on-write, and why most real stacks end up polyglot.',
+    Component: ModelsDebrief,
   },
   '4.1': {
     eyebrow: 'Chapter 4 — Encoding & Evolution',
