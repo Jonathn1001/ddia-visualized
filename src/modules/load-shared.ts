@@ -13,7 +13,7 @@ export const LOAD_MAX = 20; // slider max; ρ(c=1) = level/12, so >12 overloads 
 export const WINDOW = 200; // rolling completions kept for percentiles/throughput
 export const WINDOW_MIN = 40; // warmup: no win-flag latches before this many completions
 export const CACHE_TICKS = 1; // a cache hit's service time
-export const SLA = 100; // C1 p99 threshold, ticks
+export const SLA = 150; // C1 p99 threshold, ticks (breach p99 ~1150 vs rescue p99 ~70 => fat gap)
 export const VAR_TAIL_MULT = 3; // C2 hiTail: p99 >= MULT * p50
 export const LO_TAIL_MULT = 1.5; // C2 loTail: p99 <  MULT * p50
 export const FANOUT_MIN = 20; // C3 minimum fan-out
@@ -126,8 +126,10 @@ export function evalChallenges(
   const c1 = { ...prev.c1 };
   const c2 = { ...prev.c2 };
   const c3 = { ...prev.c3 };
-  // C1 — the knee + rescue
-  if (!c1.breached && s.servers === 1 && p99 > SLA && p50 < SLA) c1.breached = true;
+  // C1 — the knee + rescue. Breach is the QUEUE-driven tail (p99 > SLA at one server);
+  // the percentile-lesson (p99 >> p50) is C2's job, since p50 is not seed-stable in the
+  // near-capacity regime where a replica can actually rescue.
+  if (!c1.breached && s.servers === 1 && p99 > SLA) c1.breached = true;
   if (c1.breached && !c1.rescued && s.servers >= 2 && p99 < SLA) c1.rescued = true;
   // C2 — variance drives the tail
   if (!c2.hiTail && s.varianceOn && p99 >= VAR_TAIL_MULT * Math.max(1, p50)) c2.hiTail = true;
