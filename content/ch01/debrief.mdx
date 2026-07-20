@@ -1,0 +1,141 @@
+# Chapter 1 — Reliable, Scalable, Maintainable: Debrief
+
+## Averages lie; percentiles tell the truth
+
+Every number this lab cares about is a **percentile**, never an average. The
+median (**p50**) is the request in the middle: half are faster, half slower.
+The **p99** is the request slower than 99% of the rest — the tail. You watched
+these two move independently all lab: p50 sat calm while p99 detonated. That
+gap is the entire point. A mean response time would have averaged the calm
+median together with the exploding tail and reported a single reassuring number
+that *no actual user experienced*. Percentiles refuse to hide the tail, and the
+tail is what users feel — the one slow request in a hundred is the one that
+times out, retries, and abandons the cart. This is why SLAs are written as
+"p99 under 200ms," never "average under 200ms": the average is a number about
+the system; the percentile is a number about a user.
+
+## The knee: latency is a capacity cliff, not a slope
+
+Dragging the load slider up did nothing dramatic — right up until it did. Below
+capacity, an arriving request usually finds a free server and leaves quickly.
+As arrival rate approaches the service rate (**utilisation** ρ → 1), the servers
+can no longer clear work as fast as it lands, and a **queue** forms. Waiting in
+that queue — not the service time itself — comes to dominate response time, and
+it does so *non-linearly*: the closer ρ gets to 1, the faster the tail blows up,
+because the queue that formed during a random burst takes longer and longer to
+drain. That's why the challenge is called "the knee" — response-time-versus-load
+is a hockey stick, flat then vertical, not a gentle ramp. And the fix you
+applied is telling: adding one **replica** roughly halved utilisation, the queue
+drained, and the same load that had breached the SLA now cleared comfortably
+under it. Near the cliff, the lever is capacity, not micro-optimisation — a
+faster function that leaves you at ρ = 0.99 is still on the cliff.
+
+## The tail is made of variance
+
+Then you did something that looks paradoxical: gave the tier plenty of servers
+so almost nothing queued, and p99 was *still* many times p50. With the queue
+gone, where did the tail come from? **Service-time variance.** When service
+times vary (some requests are cheap, a few are expensive), the expensive ones
+land in p99 no matter how idle the servers are — and worse, in a FIFO queue one
+slow request blocks every quick request behind it (**head-of-line blocking**),
+so a single straggler taxes its neighbours. Flipping variance off — making every
+request take the same fixed time — collapsed the tail straight onto the mean:
+p99 ≈ p50. The lesson stacks on the first one: percentiles matter *because*
+variance exists, and variance comes from two independent sources — queueing
+(load-driven, fixable with capacity) and service-time spread (workload-driven,
+fixable only by changing the work).
+
+## Tail-latency amplification: rare becomes common
+
+The last challenge is the one that surprises people. A single user request often
+fans out to many backend calls — a page load hitting dozens of services — and it
+is only as fast as its **slowest** call, because it has to wait for all of them.
+So the user's latency is the *maximum* of N backend samples. Here is the trap:
+if just 1-in-100 backend calls is slow, a request that makes one backend call is
+slow 1% of the time — but a request that fans out to 100 calls is slow **63%**
+of the time (it only takes one). You watched the median user request (p50) climb
+until it matched what had been the backend's p95: the rare backend slow-case had
+become the *common* user experience. This is **tail-latency amplification**, and
+it means tail latencies matter far more the deeper your call graph goes. The
+real remedies are architectural: make fewer backend calls, or issue **hedged
+requests** (send the same call to two replicas, take the first to answer, cancel
+the other) so one straggler can't hold the whole request hostage.
+
+## The other two pillars (not simulated here)
+
+This lab is a Scalability lab, but Chapter 1 stands on three pillars. The other
+two are conceptual rather than quantitative, so they live here in prose:
+
+**Reliability** is the system continuing to work correctly *even when things go
+wrong*. The precise vocabulary matters: a **fault** is one component deviating
+from spec; a **failure** is the system as a whole stopping service. The goal of
+a fault-tolerant system is to prevent faults from cascading into failures. Faults
+come in three flavours — **hardware** (a disk dies; answered with redundancy),
+**software** (a bug triggered by a specific input, correlated across all nodes
+at once, the scary kind), and **human** (operators are the leading cause of
+outages; answered with good abstractions, sandboxes, and easy rollback). The
+counter-intuitive move is to *cause faults on purpose* to build confidence —
+Netflix's **Chaos Monkey** kills production instances at random so the team
+learns the system survives it. That "break it yourself" philosophy is exactly
+what the chaos labs in this project are for: [Ch5](#) replication, [Ch8](#)
+unreliable networks, and [Ch9](#) consensus each hand you the fault injector.
+
+**Maintainability** is the cost of everything after the code ships, and it has
+three facets. **Operability** — making it easy for ops teams to keep the system
+running (good monitoring, predictable behaviour, self-healing). **Simplicity** —
+managing complexity so new engineers can understand the system; the enemy is
+*accidental* complexity (complexity from the implementation, not the problem),
+fought with good **abstractions**. **Evolvability** — making it easy to change
+the system as requirements shift, which is largely a function of simplicity and
+good tests. None of these show up on a latency chart, which is precisely why
+they get neglected — and why the book puts them on equal footing with the two
+pillars that do.
+
+## The named cuts
+
+This lab models one service tier as an M/M/c queue; several real complications
+are cut on purpose:
+
+- **Multi-tier call graphs** — real requests hop through many services, each a
+  queue of its own; amplification here is one tier fanning out, not a deep graph.
+- **Autoscaling** — *you* are the autoscaler, dragging servers up by hand. Real
+  systems add and remove capacity automatically in response to the very metrics
+  this lab displays.
+- **Poisson-only arrivals** — arrivals here are a memoryless (exponential)
+  process. Real traffic has diurnal cycles, thundering-herd retries, and
+  correlated bursts that a single rate parameter can't capture.
+- **Priority / smarter scheduling** — the queue is plain FIFO, so head-of-line
+  blocking is unmitigated. Real systems use priority queues, LIFO, or
+  SLO-aware scheduling to protect the tail.
+- **Hedged requests** — named above as the fix for amplification, but not
+  simulated; adding them would need a request to occupy two servers and cancel
+  the loser.
+- **Analytic prediction** — this lab *measures* the queue by simulating it; it
+  does not overlay the closed-form M/M/1 curve. The point is to feel the knee,
+  not to derive it.
+
+## Real systems
+
+The book's home example is **Twitter's timeline**: fan-out-on-write (precompute
+each user's home timeline when someone tweets) versus fan-out-on-read (assemble
+it at read time). It's a load-parameter story — a celebrity with 30M followers
+makes fan-out-on-write a write-amplification nightmare, so Twitter uses a hybrid.
+**Amazon** famously specifies internal SLAs at the **p99.9** — the slowest
+1-in-1000 request — because those tail requests often belong to the customers
+with the most data and the most purchases, i.e. the most valuable ones; the
+average would have written them off. And the canonical reference for everything
+in this lab is Dean & Barroso's **"The Tail at Scale"** (CACM, 2013), which
+names tail-latency amplification and prescribes hedged and tied requests as the
+cure — the paper this lab is, in miniature, a playable version of.
+
+## Terms
+
+- **latency vs response time** — response time is what the client sees (queueing + service + network); latency is the duration a request is *waiting* to be handled. Casually used interchangeably; the tail this lab shows is response time.
+- **percentile / p99 / tail latency** — the value below which a given fraction of requests fall; p99 is the 99th percentile, the "tail" that a small fraction of requests exceed and that users disproportionately feel.
+- **throughput** — requests completed per unit time; the other axis of performance, traded against response time as load rises.
+- **load parameter** — the number that describes load for *your* system (requests/sec, read/write ratio, fan-out factor, cache hit rate) — Chapter 1's "describe the load, then ask what happens when it grows."
+- **utilisation (ρ)** — the fraction of capacity in use (arrival rate ÷ service rate × servers); response time explodes as ρ → 1.
+- **head-of-line blocking** — one slow request at the front of a FIFO queue delaying all the quick requests behind it, inflating their response times too.
+- **tail-latency amplification** — a request that fans out to N backend calls inheriting the *maximum* of their latencies, so a rare backend slow-case becomes a common user slow-case.
+- **fault vs failure** — a fault is one component going wrong; a failure is the whole system stopping service. Fault tolerance is keeping faults from becoming failures.
+- **SLA / SLO** — a Service Level Agreement/Objective, the promised bound (almost always a tail percentile, e.g. "p99 < 200ms for 99.9% of hours"), never an average.
