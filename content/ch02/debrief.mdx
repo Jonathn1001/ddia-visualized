@@ -1,0 +1,107 @@
+# Chapter 2 — Data Models & Query Languages: Debrief
+
+## The model decides which questions are cheap
+
+You stored the *same* social network three ways — normalized relational tables, a
+denormalized document per user, and a graph of nodes and edges — and ran the *same*
+query against all three. Every model returned the same answer. What changed, wildly, was
+the **cost**. That is the whole chapter: a data model is not a storage detail you can
+swap later without consequence. It decides, up front, which questions are one cheap
+query and which are an expensive slog of round trips. **Pick the model that makes your
+most common query cheap** — and know what you're trading away for the ones you don't.
+
+## Relational vs document: locality vs joins
+
+The document model's appeal is **locality**: a user and everything that belongs *to* that
+user — their profile, their settings, their list of friend IDs — sit together in one
+document, fetched in one read. For **one-to-many** tree-shaped data (a résumé with its
+list of jobs; an order with its line items) that's a genuine win over a relational schema
+that scatters the same object across a dozen tables and reassembles it with joins. This
+is the **object-relational mismatch** the document model set out to solve: your objects
+are trees, but relations are flat, so an ORM spends its life translating.
+
+But the friends-of-friends query showed the other edge of that knife. A document stores
+its friends as *IDs*, not as embedded friend objects — so to answer "friends of friends"
+you fetch Alice's document, then fetch each friend's document to read *their* friend IDs.
+That's the **N+1 problem**: one query to get the list, then N more, one per item, each a
+separate network round trip. The document store has **no join**, so the join reappears in
+your application code, one fetch at a time. The relational database did it in a single
+declarative join over the friendships table; the graph did it in a single traversal. Same
+answer, one round trip vs many.
+
+## The graph model: many-to-many as a first-class citizen
+
+Many-to-many relationships — friendships, likes, "who reports to whom," "which drug
+interacts with which" — are where documents fall apart and where **graphs shine**. In a
+graph, a relationship is an **edge**, a first-class thing you traverse directly, and the
+cost of "friends of friends of friends" grows *linearly* with depth instead of
+multiplicatively with fan-out. Relational databases can express these too — with a join
+table and, for variable-depth traversal, recursive queries — but the graph's traversal
+model and its declarative query languages (Neo4j's **Cypher**, RDF's **SPARQL**) say
+"follow this edge, then that one" far more naturally than a self-join ever could. The
+many-to-many challenge made this concrete: the document model scanned every user and
+fetched every liked post, while the join table and the graph went straight to the answer.
+
+## Schema-on-read vs schema-on-write
+
+Adding a `nickname` to one user cost the document store **nothing**: Alice's document grew
+a field, the other five were untouched. Documents are heterogeneous by default, so there
+is no schema to migrate — the shape is validated when you *read* the data
+(**schema-on-read**), not when you write it. The relational table paid a migration:
+`ALTER TABLE` adds the column to *every* row, and the users without a nickname get a NULL,
+because a relational schema guarantees every row has every column (**schema-on-write**).
+Neither is "better" — it's a trade. Schema-on-read buys agility when the data is
+heterogeneous or evolving fast (or when you don't control the shape); schema-on-write buys
+a guarantee the reader can rely on, and catches a whole class of bugs at write time
+instead of scattering them across every reader.
+
+## Declarative vs imperative
+
+Notice that the relational and graph answers were **declarative**: you say *what* you
+want (the friends-of-friends, the users who like a tech post) and the engine decides
+*how* to get it — which order to join, which index to use. The document N+1 was
+**imperative**: your application code spelled out every fetch, one loop at a time. The
+declarative style isn't just tidier — it lets the engine optimize (and parallelize)
+without you rewriting the query, which is exactly the property that makes **MapReduce**
+(Ch10) — a more imperative, more manual dataflow — feel like a step backward in
+expressiveness even as it scales out. Declarative queries hide the how so the how can
+change.
+
+## The named cuts
+
+This lab is a comparison widget; several real complications are cut on purpose:
+
+- **Write / update / delete paths** — everything here is a read query, except the one
+  schema-flex toggle (and only its *shape* is shown, not a transactional write).
+- **Query planners & indexes** — each model runs one fixed execution strategy at unit
+  cost per access; there is no cost-based optimizer and no B-tree/hash index accelerating
+  a lookup (indexes are Ch3's subject). Real databases would use indexes to cut probes.
+- **Variable-depth traversal** — the graph's biggest edge over relational (recursive
+  "friends of friends of friends…") isn't exercised; FoF is a fixed two hops.
+- **Triple-stores, Datalog, SPARQL execution** — Cypher-style traversal is the only graph
+  query modeled.
+- **Distributed cost** — the round-trip counts are logical, not the real network,
+  replication, or partitioning cost of a distributed query.
+
+## Real systems
+
+**PostgreSQL** and **MySQL** are the relational workhorses; **MongoDB** and **Couchbase**
+are document stores built around locality and schema-on-read; **Neo4j** (with **Cypher**)
+and RDF triple-stores (with **SPARQL**) are the graph databases. The honest takeaway is
+that most real systems are **polyglot**: a product uses a relational store for its
+transactional core, a document store for a fast-changing content blob, a graph for the
+social/recommendation layer, and a search index (Ch12) derived from all of them — the
+right model per workload, not one model to rule them all.
+
+## Terms
+
+- **relational model** — data as rows in tables with a fixed schema; relationships via foreign keys and joins.
+- **document model** — data as self-contained, often nested, documents; strong locality, weak at joins.
+- **graph model** — data as nodes and edges; relationships (especially many-to-many) are first-class and traversable.
+- **normalization / denormalization** — splitting data to avoid duplication (normalize) vs duplicating it for read locality (denormalize).
+- **one-to-many vs many-to-many** — a tree (documents win via locality) vs a web (relations/graphs win via joins/edges).
+- **object-relational mismatch** — the friction between tree-shaped application objects and flat relational tables.
+- **schema-on-read vs schema-on-write** — validate shape when reading (flexible, heterogeneous) vs when writing (guaranteed, migrated).
+- **declarative vs imperative query** — say *what* you want and let the engine choose *how*, vs spelling out every step.
+- **locality** — keeping data that's read together stored together, so one read fetches the whole thing.
+- **N+1 problem** — one query to get a list, then one query per item to resolve it; the round-trip tax of joining in application code.
