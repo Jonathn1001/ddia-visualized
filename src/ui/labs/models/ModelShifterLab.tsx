@@ -51,6 +51,13 @@ export function ModelShifterLab() {
   };
   const pickSchema = () => setScenario('schema');
 
+  // The schema scenario hides the transport, so its one-shot commands must be applied
+  // immediately: external() only enqueues, so step once to process it (no animation).
+  const applyNow = (payload: ModelsPayload) => {
+    driver.external(DM, payload);
+    driver.stepOnce();
+  };
+
   const isQuery = scenario === 'fof' || scenario === 'm2m';
 
   return (
@@ -92,10 +99,10 @@ export function ModelShifterLab() {
         </button>
         {scenario === 'schema' && (
           <>
-            <button data-action="add-field" className={btnPrimary} onClick={() => driver.external(DM, { cmd: 'add-field' })}>
+            <button data-action="add-field" className={btnPrimary} onClick={() => applyNow({ cmd: 'add-field' })}>
               add nickname
             </button>
-            <button className={btn} onClick={() => driver.external(DM, { cmd: 'reset-schema' })}>
+            <button className={btn} onClick={() => applyNow({ cmd: 'reset-schema' })}>
               reset field
             </button>
           </>
